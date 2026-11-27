@@ -5,6 +5,7 @@
 !event_contract.py
 !main.py
 !push_app.py
+!render_app.py
 !worker_service.py
 !processors/
 !processors/*.py
