@@ -10,22 +10,19 @@ locals {
   runtime     = toset(["frontend", "backend", "worker"])
   use_network = var.enable_postgres || var.enable_static_atlas_egress
   secrets = {
-    MONGODB_URI          = "mongodb-uri"
     WORKER_SHARED_SECRET = "worker-shared-secret"
     DB_PASS              = "db-pass"
   }
   secret_access = {
-    "api-mongo"     = { service = "backend", secret = "MONGODB_URI" }
     "api-shared"    = { service = "backend", secret = "WORKER_SHARED_SECRET" }
     "worker-shared" = { service = "worker", secret = "WORKER_SHARED_SECRET" }
+    "relay-db"      = { service = "relay", secret = "DB_PASS" }
     "api-db"        = { service = "backend", secret = "DB_PASS" }
-    "worker-db"     = { service = "worker", secret = "DB_PASS" }
   }
   sql_env = var.enable_postgres ? {
-    DB_HOST = google_sql_database_instance.postgres[0].private_ip_address
-    DB_PORT = "5432"
-    DB_NAME = google_sql_database.gallery[0].name
-    DB_USER = "photo_app"
+    CLOUD_SQL_INSTANCE = google_sql_database_instance.postgres[0].connection_name
+    DB_NAME            = google_sql_database.gallery[0].name
+    DB_USER            = "photo_app"
   } : {}
 }
 
@@ -44,7 +41,7 @@ resource "google_artifact_registry_repository" "images" {
 }
 
 resource "google_service_account" "identity" {
-  for_each     = setunion(local.runtime, toset(["push", "deploy", "meter", "scheduler"]))
+  for_each     = setunion(local.runtime, toset(["push", "deploy", "meter", "scheduler", "relay"]))
   account_id   = "${var.prefix}-${each.key}"
   display_name = "Cloud Photo ${each.key}"
   depends_on   = [google_project_service.api]
@@ -276,7 +273,7 @@ resource "google_cloud_run_v2_service" "backend" {
         }
       }
       dynamic "env" {
-        for_each = setunion(var.app_secrets_ready ? toset(["MONGODB_URI", "WORKER_SHARED_SECRET"]) : toset([]), var.enable_postgres && var.postgres_secret_ready ? toset(["DB_PASS"]) : toset([]))
+        for_each = setunion(var.app_secrets_ready ? toset(["WORKER_SHARED_SECRET"]) : toset([]), var.enable_postgres && var.postgres_secret_ready ? toset(["DB_PASS"]) : toset([]))
         content {
           name = env.value
           value_source {
@@ -292,7 +289,7 @@ resource "google_cloud_run_v2_service" "backend" {
   lifecycle {
     ignore_changes = [template[0].containers[0].image, traffic]
   }
-  depends_on = [google_secret_manager_secret_iam_member.app, google_storage_bucket_iam_member.writer, google_service_account_iam_member.signer, google_pubsub_topic_iam_member.api]
+  depends_on = [google_secret_manager_secret_iam_member.app, google_storage_bucket_iam_member.writer, google_service_account_iam_member.signer, google_project_iam_member.sql_client]
 }
 
 resource "google_cloud_run_v2_service" "worker" {
@@ -327,21 +324,21 @@ resource "google_cloud_run_v2_service" "worker" {
         limits = { cpu = "1", memory = "512Mi" }
       }
       dynamic "env" {
-        for_each = merge(local.sql_env, {
+        for_each = {
           NODE_ENV          = "production"
           GCP_PROJECT_ID    = var.project_id
           GCS_BUCKET_NAME   = google_storage_bucket.images.name
           BACKEND_BASE_URL  = google_cloud_run_v2_service.backend.uri
           DERIVATIVE_PREFIX = var.derivative_prefix
           PUBSUB_PUSH_PATH  = var.worker_push_path
-        })
+        }
         content {
           name  = env.key
           value = env.value
         }
       }
       dynamic "env" {
-        for_each = setunion(var.app_secrets_ready ? toset(["WORKER_SHARED_SECRET"]) : toset([]), var.enable_postgres && var.postgres_secret_ready ? toset(["DB_PASS"]) : toset([]))
+        for_each = var.app_secrets_ready ? toset(["WORKER_SHARED_SECRET"]) : toset([])
         content {
           name = env.value
           value_source {
@@ -357,7 +354,7 @@ resource "google_cloud_run_v2_service" "worker" {
   lifecycle {
     ignore_changes = [template[0].containers[0].image, traffic]
     precondition {
-      condition     = !var.enable_push || var.app_secrets_ready
+      condition     = !var.enable_push || (var.app_secrets_ready && var.enable_postgres && var.postgres_secret_ready)
       error_message = "Attach the application secrets and deploy the real Worker before enabling push."
     }
   }
@@ -405,12 +402,6 @@ resource "google_service_account_iam_member" "push_token" {
   service_account_id = google_service_account.identity["push"].name
   role               = "roles/iam.serviceAccountTokenCreator"
   member             = "serviceAccount:${google_project_service_identity.pubsub.email}"
-}
-
-resource "google_pubsub_topic_iam_member" "api" {
-  topic  = google_pubsub_topic.process.name
-  role   = "roles/pubsub.publisher"
-  member = google_service_account.identity["backend"].member
 }
 
 resource "google_pubsub_topic_iam_member" "dead" {
@@ -512,8 +503,16 @@ resource "google_cloud_run_v2_service_iam_member" "deploy" {
 }
 
 resource "google_service_account_iam_member" "act_as" {
-  for_each           = local.runtime
+  for_each           = setunion(local.runtime, toset(["relay"]))
   service_account_id = google_service_account.identity[each.key].name
   role               = "roles/iam.serviceAccountUser"
   member             = google_service_account.identity["deploy"].member
+}
+
+
+resource "google_project_iam_member" "sql_client" {
+  for_each = var.enable_postgres ? toset(["backend", "relay"]) : toset([])
+  project  = var.project_id
+  role     = "roles/cloudsql.client"
+  member   = google_service_account.identity[each.key].member
 }

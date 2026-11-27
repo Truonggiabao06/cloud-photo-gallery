@@ -7,7 +7,7 @@ from services.gcs_service import OriginalTooLargeError, SourceObjectNotFound
 from worker_service import PermanentMessageError, PhotoWorker
 
 
-PHOTO_ID = "0123456789abcdef01234567"
+PHOTO_ID = "01234567-89ab-cdef-0123-456701234567"
 
 
 def jpeg_bytes():
@@ -62,13 +62,15 @@ class WorkerServiceTests(unittest.TestCase):
 
         outputs = worker.process(event())
 
-        self.assertEqual(outputs["small"], f"thumbnail/small/{PHOTO_ID}.webp")
-        self.assertEqual(outputs["large"], f"thumbnail/large/{PHOTO_ID}.webp")
+        self.assertEqual(outputs["small"], f"thumbnails/{PHOTO_ID}/small.webp")
+        self.assertEqual(outputs["large"], f"thumbnails/{PHOTO_ID}/large.webp")
         self.assertEqual(len(storage.save_calls), 2)
         self.assertEqual(status.updates[-1][1], {
             "status": "COMPLETED",
             "progress": 100,
-            "thumbnailObject": f"thumbnail/large/{PHOTO_ID}.webp",
+            "thumbnailObject": f"thumbnails/{PHOTO_ID}/large.webp",
+            "thumbnailSmallObject": f"thumbnails/{PHOTO_ID}/small.webp",
+            "thumbnailLargeObject": f"thumbnails/{PHOTO_ID}/large.webp",
         })
 
     def test_redelivery_uses_same_deterministic_keys(self):

@@ -33,12 +33,12 @@ class StatusApiTests(unittest.TestCase):
         session.headers = {}
         session.patch.return_value = FakeResponse()
         client = WorkerStatusClient(self.make_settings(), session=session)
-        client.update("0123456789abcdef01234567", {"status": "PROCESSING", "progress": 10})
+        client.update("01234567-89ab-cdef-0123-456701234567", {"status": "PROCESSING", "progress": 10})
         self.assertEqual(session.headers["x-worker-secret"], "x" * 40)
         args, kwargs = session.patch.call_args
         self.assertEqual(
             args[0],
-            "http://localhost:3000/api/photos/0123456789abcdef01234567/worker-status",
+            "http://localhost:3000/api/photos/01234567-89ab-cdef-0123-456701234567/worker-status",
         )
         self.assertEqual(kwargs["json"], {"status": "PROCESSING", "progress": 10})
         self.assertEqual(kwargs["timeout"], 9)
@@ -50,7 +50,7 @@ class StatusApiTests(unittest.TestCase):
         session.patch.return_value = FakeResponse(ok=False, status_code=401, text="unauthorized")
         client = WorkerStatusClient(self.make_settings(), session=session)
         with self.assertRaisesRegex(RuntimeError, "HTTP 401"):
-            client.update("0123456789abcdef01234567", {"status": "FAILED"})
+            client.update("01234567-89ab-cdef-0123-456701234567", {"status": "FAILED"})
 
     def test_redirect_is_not_treated_as_success(self):
         session = Mock()
@@ -58,7 +58,7 @@ class StatusApiTests(unittest.TestCase):
         session.patch.return_value = FakeResponse(ok=True, status_code=302, text="redirect")
         client = WorkerStatusClient(self.make_settings(), session=session)
         with self.assertRaisesRegex(RuntimeError, "HTTP 302"):
-            client.update("0123456789abcdef01234567", {"status": "PROCESSING"})
+            client.update("01234567-89ab-cdef-0123-456701234567", {"status": "PROCESSING"})
 
 
 if __name__ == "__main__":

@@ -1,6 +1,5 @@
 const express = require("express");
-const Album = require("../models/Album");
-const Photo = require("../models/Photo");
+const gallery = require("../services/gallery.service");
 const { requireAuth } = require("../middleware/auth");
 
 const router = express.Router();
@@ -30,15 +29,14 @@ router.use(requireAuth);
 router.post("/", async (req, res, next) => {
   try {
     const { name, description = "" } = req.body;
-    if (!name || !String(name).trim()) {
-      return res.status(400).json({ success: false, message: "Album name is required" });
+    if (typeof name !== "string" || !name.trim() || name.trim().length > 150) {
+      return res.status(400).json({ success: false, message: "Album name must be 1 to 150 characters" });
     }
 
-    const album = await Album.create({
-      name: String(name).trim(),
-      description,
-      ownerId: req.user.id
-    });
+    if (typeof description !== "string") {
+      return res.status(400).json({ success: false, message: "Description must be a string" });
+    }
+    const album = await gallery.createAlbum(name.trim(), description, req.user.id);
 
     res.status(201).json({ success: true, album });
   } catch (err) {
@@ -50,7 +48,7 @@ router.post("/", async (req, res, next) => {
  * @swagger
  * /api/albums:
  *   get:
- *     summary: List albums owned by current user
+ *     summary: List albums visible to the current user
  *     security:
  *       - bearerAuth: []
  *     responses:
@@ -59,7 +57,7 @@ router.post("/", async (req, res, next) => {
  */
 router.get("/", async (req, res, next) => {
   try {
-    const albums = await Album.find({ ownerId: req.user.id }).sort({ createdAt: -1 }).lean();
+    const albums = await gallery.listAlbums(req.user.id);
     res.json({ success: true, count: albums.length, albums });
   } catch (err) {
     next(err);
@@ -86,10 +84,24 @@ router.get("/", async (req, res, next) => {
  */
 router.get("/:id", async (req, res, next) => {
   try {
-    const album = await Album.findOne({ _id: req.params.id, ownerId: req.user.id }).lean();
+    const album = await gallery.findAlbum(req.user.id, req.params.id);
     if (!album) return res.status(404).json({ success: false, message: "Album not found" });
-    const photoCount = await Photo.countDocuments({ albumId: album._id, ownerId: req.user.id });
-    res.json({ success: true, album: { ...album, photoCount } });
+    res.json({ success: true, album });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/:id/members", async (req, res, next) => {
+  try {
+    const { memberId } = req.body;
+    if (typeof memberId !== "string" || !memberId.trim() || memberId.length > 255 ||
+        memberId !== memberId.trim() || memberId === req.user.id) {
+      return res.status(400).json({ success: false, message: "A different user's Entra subject is required" });
+    }
+    const member = await gallery.inviteViewer(req.user.id, req.params.id, memberId);
+    if (!member) return res.status(404).json({ success: false, message: "Album not found" });
+    res.json({ success: true, member });
   } catch (err) {
     next(err);
   }

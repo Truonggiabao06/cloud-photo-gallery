@@ -171,5 +171,7 @@ jobs:
           if [[ "$SERVICE" == backend ]]; then
             origin=$(gcloud run services describe "$name" --project "$PROJECT" --region "$REGION" --format='value(status.url)')
             curl -fsS --retry 3 --max-time 15 "$origin/api/health"               | jq -e '.success == true and .status == "OK"' > /dev/null
+            gcloud run jobs update "$PREFIX-outbox" --project "$PROJECT" --region "$REGION" \
+              --image "$IMAGE" --quiet
           fi
           printf '%s %s\n' "$revision" "$IMAGE" >> "$GITHUB_STEP_SUMMARY"

@@ -15,11 +15,11 @@ class PushAppTests(unittest.TestCase):
         self.event = {
             "eventType": "PHOTO_UPLOADED",
             "eventVersion": 1,
-            "photoId": "a" * 24,
-            "albumId": "b" * 24,
+            "photoId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            "albumId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
             "userId": "local-user",
             "bucket": "test-bucket",
-            "originalObject": "original/local-user/" + "b" * 24 + "/test.jpg",
+            "originalObject": "original/local-user/" + "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" + "/test.jpg",
             "mimeType": "image/jpeg",
             "createdAt": "2026-01-01T00:00:00Z",
         }
@@ -45,7 +45,7 @@ class PushAppTests(unittest.TestCase):
     def test_success_acks_after_processing(self):
         self.assertEqual(self.post().status_code, 204)
         self.worker.process.assert_called_once()
-        self.assertEqual(self.worker.process.call_args.args[0]["photoId"], "a" * 24)
+        self.assertEqual(self.worker.process.call_args.args[0]["photoId"], "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 
     def test_permanent_failure_acks(self):
         self.worker.process.side_effect = PermanentMessageError("invalid JPEG")

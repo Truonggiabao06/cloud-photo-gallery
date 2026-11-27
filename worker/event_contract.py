@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 
-_OBJECT_ID = re.compile(r"^[a-fA-F0-9]{24}$")
+UUID_PATTERN = re.compile(r"^[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}$")
 _REQUIRED_FIELDS = (
     "eventType",
     "eventVersion",
@@ -43,10 +43,14 @@ def validate_event(payload: Any, expected_bucket: str) -> dict[str, Any]:
 
     photo_id = payload["photoId"]
     album_id = payload["albumId"]
-    if not isinstance(photo_id, str) or not _OBJECT_ID.fullmatch(photo_id):
-        raise InvalidEventError("photoId must be a 24-character MongoDB ObjectId")
-    if not isinstance(album_id, str) or not _OBJECT_ID.fullmatch(album_id):
-        raise InvalidEventError("albumId must be a 24-character MongoDB ObjectId")
+    if not isinstance(photo_id, str) or not UUID_PATTERN.fullmatch(photo_id):
+        raise InvalidEventError("photoId must be a PostgreSQL UUID")
+    if not isinstance(album_id, str) or not UUID_PATTERN.fullmatch(album_id):
+        raise InvalidEventError("albumId must be a PostgreSQL UUID")
+
+    job_id = payload.get("jobId", photo_id)
+    if not isinstance(job_id, str) or not UUID_PATTERN.fullmatch(job_id):
+        raise InvalidEventError("jobId must be a PostgreSQL UUID")
 
     user_id = payload["userId"]
     if (
@@ -99,6 +103,7 @@ def validate_event(payload: Any, expected_bucket: str) -> dict[str, Any]:
         "eventType": "PHOTO_UPLOADED",
         "eventVersion": 1,
         "photoId": photo_id.lower(),
+        "jobId": job_id.lower(),
         "albumId": album_id.lower(),
         "userId": user_id,
         "bucket": bucket,

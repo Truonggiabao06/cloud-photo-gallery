@@ -1,14 +1,15 @@
 """Coordinates one PHOTO_UPLOADED event from Pub/Sub to GCS and Backend API."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import json
 import logging
-import re
+from event_contract import UUID_PATTERN
 
 from processors.image_processor import InvalidImageError, create_thumbnails
 from services.gcs_service import OriginalTooLargeError, SourceObjectNotFound
 
 logger = logging.getLogger(__name__)
-_PHOTO_ID_PATTERN = re.compile(r"^[a-f0-9]{24}$")
 _SUPPORTED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
 
 
@@ -22,35 +23,50 @@ class PhotoWorker:
         self.status_client = status_client
         self.max_image_pixels = max_image_pixels
 
-    def _mark_failed(self, photo_id: str, reason: str) -> None:
+    @staticmethod
+    def _log_terminal(event: dict, result: dict | None, status: str) -> None:
+        if not result or not result.get("terminalCommit"):
+            return
+        photo_id = event["photoId"]
+        record = {"event": "job_terminal", "photoId": photo_id, "jobId": result.get("jobId") or event.get("jobId", photo_id), "status": status}
+        if event.get("createdAt"):
+            created_at = datetime.fromisoformat(event["createdAt"].replace("Z", "+00:00"))
+            record["latencySeconds"] = max(0, (datetime.now(timezone.utc) - created_at).total_seconds())
+        print(json.dumps(record), flush=True)
+
+    def _mark_failed(self, event: dict, photo_id: str, reason: str) -> None:
         # If the Backend update fails, let the exception escape so Pub/Sub redelivers.
-        self.status_client.update(photo_id, {
+        result = self.status_client.update(photo_id, {
             "status": "FAILED",
             "progress": 0,
             "errorMessage": reason[:500],
         })
+        self._log_terminal(event, result, "FAILED")
 
     def process(self, event: dict) -> dict[str, str]:
         photo_id = str(event.get("photoId", "")).lower()
-        if not _PHOTO_ID_PATTERN.fullmatch(photo_id):
-            raise PermanentMessageError("photoId is not a valid MongoDB ObjectId")
+        if not UUID_PATTERN.fullmatch(photo_id):
+            raise PermanentMessageError("photoId is not a valid PostgreSQL UUID")
+
+        result = self.status_client.update(photo_id, {"status": "PROCESSING", "progress": 10})
+        if result and result.get("alreadyTerminal"):
+            return {}
 
         mime_type = event.get("mimeType")
         if mime_type not in _SUPPORTED_MIME_TYPES:
             reason = f"Unsupported MIME type: {mime_type!r}"
-            self._mark_failed(photo_id, reason)
+            self._mark_failed(event, photo_id, reason)
             raise PermanentMessageError(reason)
 
         bucket = event["bucket"]
         original_object = event["originalObject"]
-        small_key = f"thumbnail/small/{photo_id}.webp"
-        large_key = f"thumbnail/large/{photo_id}.webp"
+        small_key = f"thumbnails/{photo_id}/small.webp"
+        large_key = f"thumbnails/{photo_id}/large.webp"
 
-        self.status_client.update(photo_id, {"status": "PROCESSING", "progress": 10})
         try:
             original_bytes = self.storage.download_original(bucket, original_object)
         except (SourceObjectNotFound, OriginalTooLargeError) as exc:
-            self._mark_failed(photo_id, str(exc))
+            self._mark_failed(event, photo_id, str(exc))
             raise PermanentMessageError(str(exc)) from exc
 
         self.status_client.update(photo_id, {"status": "PROCESSING", "progress": 35})
@@ -61,7 +77,7 @@ class PhotoWorker:
                 max_pixels=self.max_image_pixels,
             )
         except InvalidImageError as exc:
-            self._mark_failed(photo_id, str(exc))
+            self._mark_failed(event, photo_id, str(exc))
             raise PermanentMessageError(str(exc)) from exc
 
         # GCS create-only writes make redelivery safe. Existing deterministic outputs
@@ -70,13 +86,14 @@ class PhotoWorker:
         self.storage.save_thumbnail(bucket, large_key, large)
 
         self.status_client.update(photo_id, {"status": "PROCESSING", "progress": 90})
-        # Member 2's existing Photo model/API supports only `thumbnailObject`.
-        # Store the large thumbnail there without changing the shared Backend contract.
-        self.status_client.update(photo_id, {
+        result = self.status_client.update(photo_id, {
             "status": "COMPLETED",
             "progress": 100,
             "thumbnailObject": large_key,
+            "thumbnailSmallObject": small_key,
+            "thumbnailLargeObject": large_key,
         })
+        self._log_terminal(event, result, "COMPLETED")
 
         logger.info("Processed photo %s: small=%s large=%s", photo_id, small_key, large_key)
         return {"small": small_key, "large": large_key}

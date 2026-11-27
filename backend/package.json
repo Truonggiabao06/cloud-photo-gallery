@@ -1,13 +1,14 @@
 {
   "name": "cloud-photo-backend",
   "version": "1.0.0",
-  "description": "Cloud Photo Gallery Backend - Express, MongoDB, GCS, Entra ID and Pub/Sub",
+  "description": "Cloud Photo Gallery Backend - Express, PostgreSQL, GCS, Entra ID and Pub/Sub",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js"
   },
   "dependencies": {
+    "@google-cloud/cloud-sql-connector": "^1.13.1",
     "@google-cloud/pubsub": "^4.11.0",
     "@google-cloud/storage": "^7.16.0",
     "cors": "^2.8.5",
@@ -17,9 +18,9 @@
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
     "jwks-rsa": "^3.1.0",
-    "mongoose": "^8.9.5",
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",
+    "pg": "^8.23.1",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1"
   },

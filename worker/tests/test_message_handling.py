@@ -4,8 +4,8 @@ import unittest
 from main import handle_message
 from worker_service import PermanentMessageError
 
-PHOTO_ID = "0123456789abcdef01234567"
-ALBUM_ID = "abcdef0123456789abcdef01"
+PHOTO_ID = "01234567-89ab-cdef-0123-456701234567"
+ALBUM_ID = "abcdef01-2345-6789-abcd-ef0101234567"
 BUCKET = "gallery-private-bucket"
 
 

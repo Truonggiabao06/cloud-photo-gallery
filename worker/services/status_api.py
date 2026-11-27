@@ -36,7 +36,7 @@ class WorkerStatusClient:
             "Accept": "application/json",
         })
 
-    def update(self, photo_id: str, payload: dict) -> None:
+    def update(self, photo_id: str, payload: dict) -> dict:
         """PATCH /api/photos/:id/worker-status; raises on any non-2xx response."""
         url = f"{self.base_url}/api/photos/{photo_id}/worker-status"
         # requests.Session is not guaranteed to be thread-safe. Serialize access
@@ -55,3 +55,11 @@ class WorkerStatusClient:
             raise RuntimeError(
                 f"Backend worker-status API returned HTTP {response.status_code}: {body}"
             )
+
+        if not response.text:
+            return {}
+        try:
+            result = response.json()
+        except ValueError:
+            return {}
+        return result if isinstance(result, dict) else {}

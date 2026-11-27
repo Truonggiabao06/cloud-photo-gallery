@@ -16,9 +16,10 @@ from worker_service import PhotoWorker
 class PushMessage:
     """Provide the ack/nack interface used by the existing event handler."""
 
-    def __init__(self, data: bytes, message_id: str):
+    def __init__(self, data: bytes, message_id: str, delivery_attempt: int):
         self.data = data
         self.message_id = message_id
+        self.delivery_attempt = delivery_attempt
         self.acknowledged = False
 
     def ack(self) -> None:
@@ -64,7 +65,8 @@ def create_app(*, worker=None, bucket=None, push_path=None):
         except (ValueError, binascii.Error):
             return {"error": "Invalid Pub/Sub data encoding"}, 400
 
-        delivery = PushMessage(decoded, message_id)
+        attempt = envelope.get("deliveryAttempt")
+        delivery = PushMessage(decoded, message_id, attempt if type(attempt) is int and attempt >= 1 else 1)
         handle_message(delivery, worker, bucket)
         if delivery.acknowledged:
             return "", 204

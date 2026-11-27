@@ -51,7 +51,7 @@ nano infra/terraform.tfvars
 
 Điền project, bucket duy nhất toàn cầu, GitHub repo chính xác cùng repo ID/owner ID, Entra tenant ID/API client ID, email alert và `qa_principals` dạng `["user:qa@example.com"]`. Trong Entra → App registrations, tạo app API single-tenant, đặt `api.requestedAccessTokenVersion = 2` trong manifest và expose delegated scope mặc định `access_as_user` dưới Application ID URI `api://<API_APP_ID>`. Tạo SPA registration riêng, thêm delegated permission cho scope đó và cấp consent theo chính sách tenant. Audience mặc định là API client ID. Nếu đổi nhánh, khớp biến `deploy_branch`, `on.push.branches` trong workflow và lệnh `--ref` bên dưới. Khớp region/prefix với biến shell.
 
-Với snapshot TV 2, dùng Atlas. Nếu dùng Atlas public endpoint, bật `enable_static_atlas_egress` để allowlist duy nhất NAT IP /32; dùng database user có quyền đúng DB và bật TLS. Nếu nhóm quản lý kết nối private khác, xác nhận route trước khi deploy. Giữ `app_secrets_ready = false`, `enable_push = false` và `enable_postgres = false` cho lượt đầu.
+Dùng [Cloud SQL PostgreSQL 15](postgresql.md) với `enable_postgres = true` và `derivative_prefix = "thumbnails/"`. Giữ `app_secrets_ready = false`, `postgres_secret_ready = false` và `enable_push = false` cho lượt đầu.
 
 ```bash
 terraform -chdir=infra fmt -check
@@ -66,19 +66,14 @@ State mặc định nằm ở Cloud Shell. Dùng một operator hoặc chuyển 
 
 ## 2. Nạp Secret Manager và publish cấu hình
 
-Nếu có NAT, chạy `terraform -chdir=infra output -raw atlas_egress_ip` và allowlist đúng `<IP>/32` trong Atlas.
+Hoàn thành phần Cloud SQL ở mục 6 trước khi bật các secret.
 
 ```bash
-MONGO_SECRET=$(terraform -chdir=infra output -json secret_ids | jq -er .MONGODB_URI)
 WORKER_SECRET=$(terraform -chdir=infra output -json secret_ids | jq -er .WORKER_SHARED_SECRET)
-read -rsp 'MongoDB Atlas URI: ' PHOTO_MONGO_URI
-printf '\n'
-printf '%s' "$PHOTO_MONGO_URI" | gcloud secrets versions add "$MONGO_SECRET" --data-file=- --project "$PROJECT"
-unset PHOTO_MONGO_URI
 openssl rand -hex 48 | tr -d '\n' | gcloud secrets versions add "$WORKER_SECRET" --data-file=- --project "$PROJECT"
 ```
 
-Sửa `app_secrets_ready = true` rồi apply. Terraform chỉ lưu tham chiếu tới secret. Cloud Run tự cấp `PORT=8080` và ADC của runtime SA. Khi xoay secret, điều phối cả hai revision trong staging; env secret được đọc lúc instance khởi động. Có thể pin version số trước khi rollout nếu nhóm cần giữ tương thích rollback. Nếu IAM chưa lan truyền và thấy lỗi quyền ngay sau lượt đầu, kiểm tra thông báo rồi plan/apply lại.
+Sau khi tạo user `photo_app`, thêm phiên bản `DB_PASS` và chạy migration, đặt `app_secrets_ready = true` và `postgres_secret_ready = true` trong tfvars.
 
 ```bash
 terraform -chdir=infra plan -out=secrets.tfplan
@@ -128,7 +123,7 @@ for service in frontend backend worker; do
 done
 ```
 
-WIF/IAM có thể cần vài phút lan truyền. CI bỏ qua thư mục mẫu chưa có app. Xác minh digest của Worker là image thật và endpoint POST khớp `worker_push_path`. Set `enable_push = true`, rồi apply và kiểm tra:
+WIF/IAM có thể cần vài phút lan truyền. CI bỏ qua thư mục mẫu chưa có app. Xác minh Worker và Job `$PREFIX-outbox` đã dùng image vừa build, và endpoint POST của Worker khớp `worker_push_path`. Đặt `enable_push = true` rồi apply để tạo subscription và lịch relay.
 
 ```bash
 terraform -chdir=infra plan -out=activate.tfplan
@@ -140,11 +135,11 @@ gcloud run services get-iam-policy "$PREFIX-worker" --region "$REGION" --project
 gcloud storage buckets describe "gs://$(terraform -chdir=infra output -raw bucket)" --project "$PROJECT"
 ```
 
-Chỉ upload sau khi subscription và DLQ IAM có hiệu lực. Nếu đã upload sớm, kiểm tra topic retention và reconcile job trước khi phát lại có chọn lọc. Đăng nhập Frontend bằng owner, thử một ảnh và xác minh Worker và ký GET. Worker chạy với ingress Internal và IAM Invoker. Pub/Sub cùng project gọi URL `run.app` mặc định. Khi thấy push 401/403/404, kiểm tra URL/audience, path, push SA và IAM. Khi API không khởi động, kiểm tra Atlas allowlist, URI đã URL-encode password, DB user và NAT.
+Chỉ upload sau khi subscription và DLQ IAM có hiệu lực. Nếu đã upload sớm, kiểm tra topic retention và reconcile job trước khi phát lại có chọn lọc. Đăng nhập Frontend bằng owner, thử một ảnh và xác minh Worker và ký GET. Worker chạy với ingress Internal và IAM Invoker. Pub/Sub cùng project gọi URL `run.app` mặc định. Khi thấy push 401/403/404, kiểm tra URL/audience, path, push SA và IAM. Khi API không khởi động, kiểm tra đường dẫn VPC, quyền Cloud SQL Client, DB user, Secret Manager và migration.
 
 ## 4. Chạy QA và lưu bằng chứng
 
-Lấy hai delegated API access token thật từ hai phiên MSAL. Dùng DevTools xem request gọi API của ứng dụng demo. Token cần còn đủ thời hạn và đúng audience/scope. Người thứ hai chưa được mời vào album QA. ADC của Cloud Shell cần GCS objectViewer, Pub/Sub publisher và `roles/logging.viewer` trong staging; thêm `storage.buckets.get` nếu dùng `--check-bucket-iam`. Kiểm thử invited viewer theo route chia sẻ thật sau khi TV 2 triển khai.
+Lấy hai delegated API access token thật từ hai phiên MSAL. Dùng DevTools xem request gọi API của ứng dụng demo. Token cần còn đủ thời hạn và đúng audience/scope. Người thứ hai chưa được mời vào album QA. ADC của Cloud Shell cần GCS objectViewer, Pub/Sub publisher và `roles/logging.viewer` trong staging; thêm `storage.buckets.get` nếu dùng `--check-bucket-iam`. Bộ QA kiểm tra truy cập trước và sau khi owner mời viewer, rồi thử upload bằng tài khoản viewer.
 
 ```bash
 python3 -m venv .venv
@@ -154,7 +149,7 @@ export QA_PROJECT="$PROJECT" QA_API_URL="$BACKEND_URL" QA_WORKER_URL="$WORKER_UR
 export QA_WORKER_SERVICE="$PREFIX-worker"
 QA_BUCKET=$(terraform -chdir=infra output -raw bucket)
 QA_TOPIC=$(terraform -chdir=infra output -raw topic)
-export QA_BUCKET QA_TOPIC QA_DERIVATIVE_PREFIX=thumbnail/
+export QA_BUCKET QA_TOPIC QA_DERIVATIVE_PREFIX=thumbnails/
 read -rsp 'Owner Entra access token (không gồm Bearer): ' QA_OWNER_TOKEN
 printf '\n'
 read -rsp 'Other user Entra access token: ' QA_OTHER_TOKEN
@@ -169,7 +164,7 @@ jq '.parameters, .summary' "$LOAD_JSON"
 unset QA_OWNER_TOKEN QA_OTHER_TOKEN
 ```
 
-Test 1 dùng 100 JPEG tổng hợp; Test 3 dùng 5 tệp có đuôi và MIME JPEG nhưng bytes hỏng để đi qua API hiện tại. QA kiểm tra hai derivative JPEG theo prefix mặc định và cạnh dài 160/480 px; truyền `--small-size`, `--large-size` nếu nhóm thống nhất giá trị khác. Kết quả JSON và fixtures trong `evidence/`. Test 2 cần các log từ runbook và nộp thêm bằng chứng đọc ledger của TV 4. Load dùng status của bộ ID Test 1 đã pass. Nếu gặp 429 với limiter 300/15 phút, giữ kết quả để gửi TV 2 và chạy lại cửa sổ mới hoặc bản đã sửa.
+Test 1 dùng 100 JPEG tổng hợp; Test 3 dùng 5 tệp có đuôi và MIME JPEG nhưng bytes hỏng để đi qua API hiện tại. QA kiểm tra hai thumbnail WebP theo prefix mặc định và cạnh dài 200/800 px; truyền `--small-size`, `--large-size` nếu nhóm thống nhất giá trị khác. Kết quả JSON và fixtures trong `evidence/`. Test 2 cần các log từ runbook và nộp thêm bằng chứng đọc ledger của TV 4. Load dùng status của bộ ID Test 1 đã pass. Nếu gặp 429 với limiter 300/15 phút, giữ kết quả để gửi TV 2 và chạy lại cửa sổ mới hoặc bản đã sửa.
 
 ## 5. Rollback Cloud Run
 
@@ -186,9 +181,15 @@ curl -fsS "$BACKEND_URL/api/health" | jq -e '.status == "OK"'
 
 Lưu trạng thái trước/sau, chạy smoke có auth. Với Worker, kiểm tra ACK và job mới sau rollback. Dùng `--to-revisions "$NEW_REV=100"` để quay lại revision mới đã xác minh. Schema phải tương thích ngược nếu rollback code. Terraform bỏ qua image và traffic. Khi apply thay đổi template, kiểm tra `status.traffic`; nếu traffic còn pin bản cũ, promote revision cấu hình mới sau smoke hoặc deploy qua CI.
 
-## 6. Cloud SQL PostgreSQL 15 tùy chọn
+## 6. Cloud SQL PostgreSQL 15
 
-Bật `enable_postgres` và apply để dựng instance chỉ có private IP. Backend/Worker dùng Direct VPC Egress. TV 2/4 chuyển driver, schema và migration trước khi dùng DB. App có thể dùng driver TCP TLS với xác minh CA, hoặc Cloud SQL connector private IP sau khi thêm quyền `roles/cloudsql.client` cho runtime tương ứng. Trước khi tạo user, TV 4 chạy `CREATE ROLE photo_runtime NOLOGIN;` bằng PostgreSQL admin từ môi trường trong VPC, rồi cấp quyền theo schema triển khai. Tạo mật khẩu ngoài state:
+Kết nối vào `cloud_gallery` từ máy trong VPC bằng tài khoản migration. Chạy ba script sau với `psql -v ON_ERROR_STOP=1`, theo thứ tự.
+
+1. `db/01_database_schema.sql`
+2. `db/04_backend_integration.sql`
+3. `db/05_runtime_permissions.sql`
+
+Sau khi role `photo_runtime` đã có, chạy lệnh sau trong Cloud Shell để cấp mật khẩu và tạo `photo_app` với role đó.
 
 ```bash
 DB_SECRET=$(terraform -chdir=infra output -json secret_ids | jq -er .DB_PASS)
@@ -210,7 +211,7 @@ with urllib.request.urlopen(req, timeout=30) as response:
 gcloud sql operations list --instance "$PREFIX-pg15" --project "$PROJECT" --limit 5
 ```
 
-Chờ operation hoàn thành. TV 4 chạy migration từ môi trường được cấp quyền VPC, tách migration role và quyền app. Set `postgres_secret_ready = true` rồi apply. Snapshot TV 2 vẫn cần `MONGODB_URI`. Khi chuyển app hoàn toàn, phối hợp TV 2/4 để dọn binding và phiên bản Mongo cũ sau thời hạn rollback.
+Chờ operation hoàn thành rồi quay lại mục 2 để bật secret.
 
 ## 7. Recreate
 

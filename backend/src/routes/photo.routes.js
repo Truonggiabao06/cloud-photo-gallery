@@ -2,11 +2,10 @@ const express = require("express");
 const multer = require("multer");
 const crypto = require("crypto");
 const path = require("path");
-const Photo = require("../models/Photo");
-const Album = require("../models/Album");
+const gallery = require("../services/gallery.service");
 const { requireAuth, requireWorker } = require("../middleware/auth");
-const { uploadImage, createSignedReadUrl } = require("../services/storage.service");
-const { publishPhotoUploaded } = require("../services/queue.service");
+const { uploadImage, createSignedReadUrl, deleteObject } = require("../services/storage.service");
+const { createPhotoJob, updatePhotoJob } = require("../services/photo-jobs.service");
 
 const router = express.Router();
 const upload = multer({
@@ -23,7 +22,7 @@ const upload = multer({
  * @swagger
  * /api/photos/upload:
  *   post:
- *     summary: Upload an image to Google Cloud Storage and publish a Pub/Sub event
+ *     summary: Upload an image and enqueue an Outbox event
  *     security:
  *       - bearerAuth: []
  *     requestBody:
@@ -38,54 +37,38 @@ const upload = multer({
  *               albumId: { type: string }
  *     responses:
  *       201:
- *         description: Image uploaded; processing queued when Pub/Sub is configured
+ *         description: Image uploaded; processing committed to the durable outbox
  */
 router.post("/upload", requireAuth, upload.single("image"), async (req, res, next) => {
   let createdPhoto;
   let uploadedObject;
-  try {
-    if (!req.file) return res.status(400).json({ success: false, message: "Image file is required (field: image)" });
 
-    const album = await Album.findOne({ _id: req.body.albumId, ownerId: req.user.id });
+  try {
+    if (!req.file?.size) return res.status(400).json({ success: false, message: "Image file is required (field: image)" });
+
+    const album = await gallery.findOwnedAlbum(req.user.id, req.body.albumId);
     if (!album) return res.status(404).json({ success: false, message: "Album not found or not owned by current user" });
 
+    if (req.file.originalname.length > 255) {
+      return res.status(400).json({ success: false, message: "Filename must be at most 255 characters" });
+    }
     const ext = path.extname(req.file.originalname).toLowerCase() || ".jpg";
-    const objectName = `original/${req.user.id}/${album._id}/${crypto.randomUUID()}${ext}`;
-    uploadedObject = objectName;
-
+    const objectName = `original/${req.user.id}/${album.id}/${crypto.randomUUID()}${ext}`;
     await uploadImage(req.file.buffer, objectName, req.file.mimetype);
-
-    createdPhoto = await Photo.create({
-      albumId: album._id,
+    uploadedObject = objectName;
+    const originalUrl = await createSignedReadUrl(objectName);
+    const id = crypto.randomUUID();
+    createdPhoto = await createPhotoJob({
+      _id: id,
+      albumId: album.id,
       ownerId: req.user.id,
       originalObject: objectName,
       originalName: req.file.originalname,
       mimeType: req.file.mimetype,
       size: req.file.size,
-      status: "PENDING",
-      progress: 0
+      checksumSha256: crypto.createHash("sha256").update(req.file.buffer).digest("hex")
     });
 
-    let queue = { published: false, messageId: null, reason: "Pub/Sub not configured" };
-    try {
-      queue = await publishPhotoUploaded(createdPhoto);
-      if (queue.published) {
-        createdPhoto.queuePublished = true;
-        createdPhoto.queueMessageId = queue.messageId;
-        await createdPhoto.save();
-      }
-    } catch (queueError) {
-      createdPhoto.errorMessage = `Queue publish failed: ${queueError.message}`;
-      await createdPhoto.save();
-      return res.status(503).json({
-        success: false,
-        message: "Image uploaded, but the processing event could not be queued. Ask an administrator to retry dispatch.",
-        photoId: String(createdPhoto._id),
-        queuePublished: false
-      });
-    }
-
-    const originalUrl = await createSignedReadUrl(objectName);
     res.status(201).json({
       success: true,
       message: "Image uploaded",
@@ -96,14 +79,15 @@ router.post("/upload", requireAuth, upload.single("image"), async (req, res, nex
         progress: createdPhoto.progress,
         originalUrl
       },
-      queue
+      queue: { queued: true, published: false, messageId: null, eventId: id }
     });
   } catch (err) {
     if (uploadedObject && !createdPhoto) {
       // Best-effort cleanup for a failed database insert.
       try {
-        const { deleteObject } = require("../services/storage.service");
-        await deleteObject(uploadedObject);
+        if (!err.commitUnknown) {
+          await deleteObject(uploadedObject);
+        }
       } catch (_) {}
     }
     next(err);
@@ -114,7 +98,7 @@ router.post("/upload", requireAuth, upload.single("image"), async (req, res, nex
  * @swagger
  * /api/photos:
  *   get:
- *     summary: List current user's photos
+ *     summary: List photos in visible albums
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -127,15 +111,15 @@ router.post("/upload", requireAuth, upload.single("image"), async (req, res, nex
  */
 router.get("/", requireAuth, async (req, res, next) => {
   try {
-    const filter = { ownerId: req.user.id };
-    if (req.query.albumId) filter.albumId = req.query.albumId;
-
-    const photos = await Photo.find(filter).sort({ createdAt: -1 }).limit(100).lean();
-    const results = await Promise.all(photos.map(async photo => ({
-      ...photo,
-      originalUrl: await createSignedReadUrl(photo.originalObject),
-      thumbnailUrl: await createSignedReadUrl(photo.thumbnailObject)
-    })));
+    const photos = await gallery.listPhotos(req.user.id, req.query.albumId);
+    const results = await Promise.all(photos.map(async photo => {
+      const [originalUrl, small, large] = await Promise.all([
+        createSignedReadUrl(photo.originalObject),
+        createSignedReadUrl(photo.thumbnailSmallObject),
+        createSignedReadUrl(photo.thumbnailLargeObject || photo.thumbnailObject)
+      ]);
+      return { ...photo, originalUrl, thumbnailUrl: large, thumbnailUrls: { small, large } };
+    }));
 
     res.json({ success: true, count: results.length, photos: results });
   } catch (err) {
@@ -163,7 +147,7 @@ router.get("/", requireAuth, async (req, res, next) => {
  */
 router.get("/:id/status", requireAuth, async (req, res, next) => {
   try {
-    const photo = await Photo.findOne({ _id: req.params.id, ownerId: req.user.id }).lean();
+    const photo = await gallery.findPhoto(req.user.id, req.params.id);
     if (!photo) return res.status(404).json({ success: false, message: "Photo not found" });
 
     res.json({
@@ -203,6 +187,8 @@ router.get("/:id/status", requireAuth, async (req, res, next) => {
  *               status: { type: string, enum: [PENDING, PROCESSING, COMPLETED, FAILED] }
  *               progress: { type: integer, minimum: 0, maximum: 100 }
  *               thumbnailObject: { type: string }
+ *               thumbnailSmallObject: { type: string }
+ *               thumbnailLargeObject: { type: string }
  *               errorMessage: { type: string }
  *     responses:
  *       200:
@@ -211,7 +197,7 @@ router.get("/:id/status", requireAuth, async (req, res, next) => {
 router.patch("/:id/worker-status", requireWorker, async (req, res, next) => {
   try {
     const allowed = ["PENDING", "PROCESSING", "COMPLETED", "FAILED"];
-    const { status, progress, thumbnailObject, errorMessage } = req.body;
+    const { status, progress, thumbnailObject, thumbnailSmallObject, thumbnailLargeObject, errorMessage } = req.body;
 
     if (!allowed.includes(status)) {
       return res.status(400).json({ success: false, message: "Invalid status" });
@@ -220,19 +206,31 @@ router.patch("/:id/worker-status", requireWorker, async (req, res, next) => {
       return res.status(400).json({ success: false, message: "Progress must be an integer from 0 to 100" });
     }
 
-    const update = { status, updatedAt: new Date() };
+    const update = { status };
     if (progress !== undefined) update.progress = progress;
-    if (thumbnailObject !== undefined) update.thumbnailObject = thumbnailObject;
-    if (errorMessage !== undefined) update.errorMessage = errorMessage;
+    if (!gallery.isUuid(req.params.id)) {
+      return res.status(400).json({ success: false, message: "Invalid photo ID" });
+    }
+    if (status === "FAILED") {
+      update.errorMessage = typeof errorMessage === "string" && errorMessage.trim()
+        ? errorMessage.trim().slice(0, 500) : "Image processing failed";
+    }
     if (status === "COMPLETED") {
-      update.progress = 100;
-      update.errorMessage = null;
+      const id = req.params.id.toLowerCase();
+      const expectedSmall = `thumbnails/${id}/small.webp`;
+      const expectedLarge = `thumbnails/${id}/large.webp`;
+      if (thumbnailSmallObject !== expectedSmall || (thumbnailLargeObject || thumbnailObject) !== expectedLarge) {
+        return res.status(400).json({ success: false, message: "Both deterministic thumbnail keys are required" });
+      }
     }
 
-    const photo = await Photo.findByIdAndUpdate(req.params.id, update, { new: true, runValidators: true });
+    const { photo, alreadyTerminal, terminalCommit } = await updatePhotoJob(req.params.id, update);
     if (!photo) return res.status(404).json({ success: false, message: "Photo not found" });
 
-    res.json({ success: true, photoId: photo._id, status: photo.status, progress: photo.progress });
+    res.json({
+      success: true, photoId: photo._id, jobId: photo.jobId, status: photo.status,
+      progress: photo.progress, alreadyTerminal, terminalCommit
+    });
   } catch (err) {
     next(err);
   }

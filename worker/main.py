@@ -49,6 +49,12 @@ def handle_message(message, worker: PhotoWorker, expected_bucket: str) -> str:
         message.nack()
         return "NACK_CONFIGURATION"
 
+    delivery = None
+    if isinstance(getattr(message, "delivery_attempt", None), int):
+        delivery = {"photoId": event["photoId"], "jobId": event["jobId"],
+                    "messageId": message.message_id, "deliveryAttempt": message.delivery_attempt}
+        print(json.dumps({"event": "job_attempt", **delivery}), flush=True)
+
     try:
         logger.info(
             "Received PHOTO_UPLOADED photoId=%s messageId=%s",
@@ -57,11 +63,15 @@ def handle_message(message, worker: PhotoWorker, expected_bucket: str) -> str:
         )
         worker.process(event)
         message.ack()
+        if delivery is not None:
+            print(json.dumps({"event": "delivery_ack", **delivery}), flush=True)
         logger.info("Acknowledged message %s", getattr(message, "message_id", "unknown"))
         return "ACK_PROCESSED"
     except PermanentMessageError as exc:
         logger.error("Permanent processing failure (ACK): %s", exc)
         message.ack()
+        if delivery is not None:
+            print(json.dumps({"event": "delivery_ack", **delivery}), flush=True)
         return "ACK_PERMANENT"
     except Exception:
         logger.exception("Processing failed; NACK for Pub/Sub retry")

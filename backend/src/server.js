@@ -7,7 +7,7 @@ const morgan = require("morgan");
 const rateLimit = require("express-rate-limit");
 const swaggerUi = require("swagger-ui-express");
 
-const connectDatabase = require("./config/database");
+const { connectDatabase } = require("./config/database");
 const swaggerSpec = require("./docs/swagger");
 const authRoutes = require("./routes/auth.routes");
 const albumRoutes = require("./routes/album.routes");
