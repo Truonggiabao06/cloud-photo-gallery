@@ -1,177 +1,110 @@
-name: Deploy to Cloud Run
+name: Verify and deploy to Render
 
 on:
+  pull_request:
   push:
-    branches: [main]
-    paths:
-      - 'frontend/**'
-      - 'backend/**'
-      - 'worker/**'
-      - 'infra/**'
-      - 'tests/**'
-      - '.github/workflows/deploy.yml'
+    branches: [main, integration/render-supabase-phase3]
   workflow_dispatch:
     inputs:
-      service:
-        description: Service to rebuild and deploy
+      target:
+        description: Render environment
         type: choice
         required: true
-        options: [all, frontend, backend, worker]
-        default: all
+        options: [staging, prod]
+        default: staging
 
 permissions:
   contents: read
 
-concurrency:
-  group: cloud-photo-run-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
-  paths:
+  ci:
     runs-on: ubuntu-latest
-    outputs:
-      services: ${{ steps.select.outputs.services }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
         with:
-          fetch-depth: 0
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: worker/requirements.txt
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: '1.11.4'
-      - name: Validate infrastructure and Python syntax
-        shell: bash
+          terraform_wrapper: false
+      - name: Backend tests and runtime dependency audit
+        working-directory: backend
         run: |
-          set -euo pipefail
-          terraform -chdir=infra fmt -check
-          terraform -chdir=infra init -backend=false -input=false
-          terraform -chdir=infra validate
-          python3 -m py_compile infra/measure_derivatives.py tests/qa_suite.py
-      - id: select
-        shell: bash
+          npm ci
+          node --test test/*.test.cjs
+          npm audit --omit=dev --audit-level=high
+      - name: Worker tests and runtime dependency audit
+        working-directory: worker
+        run: |
+          python -m pip install -r requirements.txt
+          python -m unittest discover -s tests
+          pipx run --spec pip-audit==2.9.0 pip-audit --strict -r requirements.txt
+      - name: Frontend config build
+        working-directory: frontend
         env:
-          BEFORE: ${{ github.event.before }}
-          REQUESTED: ${{ inputs.service }}
+          VITE_API_BASE_URL: https://example.com
+          VITE_ENTRA_TENANT_ID: 10000000-0000-0000-0000-000000000001
+          VITE_ENTRA_CLIENT_ID: 10000000-0000-0000-0000-000000000002
+          VITE_ENTRA_API_SCOPE: api://10000000-0000-0000-0000-000000000003/access_as_user
+        run: node build-config.cjs
+      - name: Validate Render infrastructure
         run: |
-          set -euo pipefail
-          if [[ -n "$BEFORE" && ! "$BEFORE" =~ ^0+$ ]] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-            git diff --name-only "$BEFORE" "$GITHUB_SHA" > /tmp/cloud-photo-changes
-          else
-            git ls-tree -r --name-only "$GITHUB_SHA" > /tmp/cloud-photo-changes
-          fi
-
-          selected=()
-          for service in frontend backend worker; do
-            if [[ -n "$REQUESTED" && "$REQUESTED" != all && "$REQUESTED" != "$service" ]]; then
-              continue
-            fi
-            if [[ -z "$REQUESTED" ]] && ! grep -Eq "^($service/|\.github/workflows/deploy\.yml$)" /tmp/cloud-photo-changes; then
-              continue
-            fi
-            case "$service" in
-              frontend)
-                if [[ -f frontend/index.html && -f frontend/build-config.cjs && -f frontend/Dockerfile ]]; then
-                  selected+=(frontend)
-                elif [[ "$REQUESTED" == frontend || -f frontend/index.html ]]; then
-                  echo "::error::Frontend requires index.html, build-config.cjs and Dockerfile"
-                  exit 1
-                fi
-                ;;
-              worker)
-                if [[ -f worker/push_app.py && -f worker/requirements.txt && -f worker/Dockerfile ]]; then
-                  selected+=(worker)
-                elif [[ "$REQUESTED" == worker || -f worker/push_app.py ]]; then
-                  echo "::error::Worker requires push_app.py, requirements.txt and Dockerfile"
-                  exit 1
-                else
-                  echo "::notice::Worker template has no HTTP push application yet"
-                fi
-                ;;
-              backend)
-                if [[ -f "$service/package.json" && -f "$service/package-lock.json" && -f "$service/Dockerfile" ]]; then
-                  selected+=("$service")
-                elif [[ "$REQUESTED" == "$service" || -f "$service/package.json" ]]; then
-                  echo "::error::Missing package.json, package-lock.json or Dockerfile under $service/"
-                  exit 1
-                else
-                  echo "::notice::$service template has no application yet"
-                fi
-                ;;
-            esac
-          done
-          services=$(jq -cn '$ARGS.positional' --args "${selected[@]}")
-          echo "services=$services" >> "$GITHUB_OUTPUT"
+          terraform -chdir=infra/render fmt -check -diff
+          terraform -chdir=infra/render init -backend=false -input=false -lockfile=readonly
+          terraform -chdir=infra/render validate
+      - name: Scan tracked files for secrets
+        run: |
+          snapshot=$(mktemp -d)
+          trap 'rm -rf "$snapshot"' EXIT
+          git archive HEAD | tar -x -C "$snapshot"
+          docker run --rm -v "$snapshot:/repo:ro" ghcr.io/gitleaks/gitleaks:v8.24.3 dir --redact --no-banner /repo
+      - name: Check deploy script syntax
+        run: node --check .github/scripts/deploy-render.cjs
 
   deploy:
-    needs: paths
-    if: needs.paths.outputs.services != '[]'
+    needs: ci
+    if: >-
+      (github.ref == 'refs/heads/integration/render-supabase-phase3' &&
+        (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.target == 'staging'))) ||
+      (github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.target == 'prod')
+    environment: ${{ inputs.target || 'staging' }}
+    concurrency:
+      group: render-${{ inputs.target || 'staging' }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix:
-        service: ${{ fromJSON(needs.paths.outputs.services) }}
-    permissions:
-      contents: read
-      id-token: write
-    env:
-      REGION: ${{ vars.GCP_REGION }}
-      PROJECT: ${{ vars.GCP_PROJECT_ID }}
-      PREFIX: ${{ vars.RUN_PREFIX }}
-      REPOSITORY: ${{ vars.ARTIFACT_REGISTRY }}
-      SERVICE: ${{ matrix.service }}
-      VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
-      VITE_ENTRA_TENANT_ID: ${{ vars.VITE_ENTRA_TENANT_ID }}
-      VITE_ENTRA_CLIENT_ID: ${{ vars.VITE_ENTRA_CLIENT_ID }}
-      VITE_ENTRA_API_SCOPE: ${{ vars.VITE_ENTRA_API_SCOPE }}
+    timeout-minutes: 30
     steps:
+      - name: Report when deployment is disabled
+        if: vars.RENDER_DEPLOY_ENABLED != 'true'
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          echo 'Set RENDER_DEPLOY_ENABLED=true in the GitHub environment after configuring Render.'
+          if [[ "$EVENT" == workflow_dispatch ]]; then exit 1; fi
       - uses: actions/checkout@v5
-      - name: Build immutable revision image
-        id: build
-        shell: bash
-        run: |
-          set -euo pipefail
-          : "${REGION:?}" "${PROJECT:?}" "${PREFIX:?}" "${REPOSITORY:?}"
-          image="$REPOSITORY/$SERVICE:$GITHUB_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          build_args=()
-          if [[ "$SERVICE" == frontend ]]; then
-            : "${VITE_API_BASE_URL:?}" "${VITE_ENTRA_TENANT_ID:?}" "${VITE_ENTRA_CLIENT_ID:?}" "${VITE_ENTRA_API_SCOPE:?}"
-            for arg in VITE_API_BASE_URL VITE_ENTRA_TENANT_ID VITE_ENTRA_CLIENT_ID VITE_ENTRA_API_SCOPE; do
-              build_args+=(--build-arg "$arg")
-            done
-          fi
-          docker build --pull "${build_args[@]}" --tag "$image" "$SERVICE"
-          echo "tag=$image" >> "$GITHUB_OUTPUT"
-      - uses: google-github-actions/auth@v3
+        if: vars.RENDER_DEPLOY_ENABLED == 'true'
+      - uses: actions/setup-node@v4
+        if: vars.RENDER_DEPLOY_ENABLED == 'true'
         with:
-          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
-          service_account: ${{ vars.DEPLOY_SERVICE_ACCOUNT }}
-      - uses: google-github-actions/setup-gcloud@v3
-      - name: Publish image and record its digest
-        id: image
-        shell: bash
+          node-version: '24'
+      - name: Deploy this commit and check services
+        if: vars.RENDER_DEPLOY_ENABLED == 'true'
         env:
-          IMAGE_TAG: ${{ steps.build.outputs.tag }}
-        run: |
-          set -euo pipefail
-          gcloud auth configure-docker "${REPOSITORY%%/*}" --quiet
-          docker push "$IMAGE_TAG"
-          digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE_TAG")
-          echo "uri=$digest" >> "$GITHUB_OUTPUT"
-      - name: Create revision and promote traffic
-        shell: bash
-        env:
-          IMAGE: ${{ steps.image.outputs.uri }}
-        run: |
-          set -euo pipefail
-          name="$PREFIX-$SERVICE"
-          suffix="r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          revision="$name-$suffix"
-          gcloud run deploy "$name" --project "$PROJECT" --region "$REGION"             --image "$IMAGE" --revision-suffix "$suffix" --no-traffic --quiet
-          gcloud run services update-traffic "$name" --project "$PROJECT" --region "$REGION"             --to-revisions "$revision=100" --quiet
-          if [[ "$SERVICE" == backend ]]; then
-            origin=$(gcloud run services describe "$name" --project "$PROJECT" --region "$REGION" --format='value(status.url)')
-            curl -fsS --retry 3 --max-time 15 "$origin/api/health"               | jq -e '.success == true and .status == "OK"' > /dev/null
-            gcloud run jobs update "$PREFIX-outbox" --project "$PROJECT" --region "$REGION" \
-              --image "$IMAGE" --quiet
-          fi
-          printf '%s %s\n' "$revision" "$IMAGE" >> "$GITHUB_STEP_SUMMARY"
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_DEPLOY_BRANCH: ${{ vars.RENDER_DEPLOY_BRANCH }}
+          RENDER_BACKEND_ID: ${{ vars.RENDER_BACKEND_ID }}
+          RENDER_WORKER_ID: ${{ vars.RENDER_WORKER_ID }}
+          RENDER_FRONTEND_ID: ${{ vars.RENDER_FRONTEND_ID }}
+          RENDER_BACKEND_URL: ${{ vars.RENDER_BACKEND_URL }}
+          RENDER_WORKER_URL: ${{ vars.RENDER_WORKER_URL }}
+          RENDER_FRONTEND_URL: ${{ vars.RENDER_FRONTEND_URL }}
+        run: node .github/scripts/deploy-render.cjs

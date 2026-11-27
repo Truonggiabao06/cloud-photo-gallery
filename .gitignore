@@ -11,3 +11,7 @@ infra/*.tfvars
 *.tfplan
 gha-creds-*.json
 evidence/
+
+# Local Render Terraform inputs and plugin data
+infra/render/.terraform/
+infra/render/*.tfvars
