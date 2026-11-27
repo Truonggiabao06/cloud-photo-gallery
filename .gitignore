@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+node_modules/
+__pycache__/
+.venv/
+infra/.terraform/
+infra/*.tfvars
+!infra/terraform.tfvars.example
+*.tfstate*
+*.tfplan
+gha-creds-*.json
+evidence/

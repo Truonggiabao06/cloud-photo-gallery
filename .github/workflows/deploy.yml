@@ -1,0 +1,153 @@
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - 'backend/**'
+      - 'worker/**'
+      - 'infra/**'
+      - 'tests/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+    inputs:
+      service:
+        description: Service to rebuild and deploy
+        type: choice
+        required: true
+        options: [all, frontend, backend, worker]
+        default: all
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloud-photo-run-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  paths:
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.select.outputs.services }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.11.4'
+      - name: Validate infrastructure and Python syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir=infra fmt -check
+          terraform -chdir=infra init -backend=false -input=false
+          terraform -chdir=infra validate
+          python3 -m py_compile infra/measure_derivatives.py tests/qa_suite.py
+      - id: select
+        shell: bash
+        env:
+          BEFORE: ${{ github.event.before }}
+          REQUESTED: ${{ inputs.service }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$BEFORE" && ! "$BEFORE" =~ ^0+$ ]] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            git diff --name-only "$BEFORE" "$GITHUB_SHA" > /tmp/cloud-photo-changes
+          else
+            git ls-tree -r --name-only "$GITHUB_SHA" > /tmp/cloud-photo-changes
+          fi
+
+          selected=()
+          for service in frontend backend worker; do
+            if [[ -n "$REQUESTED" && "$REQUESTED" != all && "$REQUESTED" != "$service" ]]; then
+              continue
+            fi
+            if [[ -z "$REQUESTED" ]] && ! grep -Eq "^($service/|\.github/workflows/deploy\.yml$)" /tmp/cloud-photo-changes; then
+              continue
+            fi
+            if [[ -f "$service/package.json" && -f "$service/package-lock.json" && -f "$service/Dockerfile" ]]; then
+              selected+=("$service")
+            elif [[ "$REQUESTED" == "$service" || -f "$service/package.json" ]]; then
+              echo "::error::Missing package.json, package-lock.json or Dockerfile under $service/"
+              exit 1
+            else
+              echo "::notice::$service template has no application yet"
+            fi
+          done
+          services=$(jq -cn '$ARGS.positional' --args "${selected[@]}")
+          echo "services=$services" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: paths
+    if: needs.paths.outputs.services != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.paths.outputs.services) }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      REGION: ${{ vars.GCP_REGION }}
+      PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      PREFIX: ${{ vars.RUN_PREFIX }}
+      REPOSITORY: ${{ vars.ARTIFACT_REGISTRY }}
+      SERVICE: ${{ matrix.service }}
+      VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+      VITE_ENTRA_TENANT_ID: ${{ vars.VITE_ENTRA_TENANT_ID }}
+      VITE_ENTRA_CLIENT_ID: ${{ vars.VITE_ENTRA_CLIENT_ID }}
+      VITE_ENTRA_API_SCOPE: ${{ vars.VITE_ENTRA_API_SCOPE }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build immutable revision image
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${REGION:?}" "${PROJECT:?}" "${PREFIX:?}" "${REPOSITORY:?}"
+          image="$REPOSITORY/$SERVICE:$GITHUB_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          build_args=()
+          if [[ "$SERVICE" == frontend ]]; then
+            : "${VITE_API_BASE_URL:?}" "${VITE_ENTRA_TENANT_ID:?}" "${VITE_ENTRA_CLIENT_ID:?}" "${VITE_ENTRA_API_SCOPE:?}"
+            for arg in VITE_API_BASE_URL VITE_ENTRA_TENANT_ID VITE_ENTRA_CLIENT_ID VITE_ENTRA_API_SCOPE; do
+              build_args+=(--build-arg "$arg")
+            done
+          fi
+          docker build --pull "${build_args[@]}" --tag "$image" "$SERVICE"
+          echo "tag=$image" >> "$GITHUB_OUTPUT"
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Publish image and record its digest
+        id: image
+        shell: bash
+        env:
+          IMAGE_TAG: ${{ steps.build.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gcloud auth configure-docker "${REPOSITORY%%/*}" --quiet
+          docker push "$IMAGE_TAG"
+          digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE_TAG")
+          echo "uri=$digest" >> "$GITHUB_OUTPUT"
+      - name: Create revision and promote traffic
+        shell: bash
+        env:
+          IMAGE: ${{ steps.image.outputs.uri }}
+        run: |
+          set -euo pipefail
+          name="$PREFIX-$SERVICE"
+          suffix="r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          revision="$name-$suffix"
+          gcloud run deploy "$name" --project "$PROJECT" --region "$REGION"             --image "$IMAGE" --revision-suffix "$suffix" --no-traffic --quiet
+          gcloud run services update-traffic "$name" --project "$PROJECT" --region "$REGION"             --to-revisions "$revision=100" --quiet
+          if [[ "$SERVICE" == backend ]]; then
+            origin=$(gcloud run services describe "$name" --project "$PROJECT" --region "$REGION" --format='value(status.url)')
+            curl -fsS --retry 3 --max-time 15 "$origin/api/health"               | jq -e '.success == true and .status == "OK"' > /dev/null
+          fi
+          printf '%s %s\n' "$revision" "$IMAGE" >> "$GITHUB_STEP_SUMMARY"
