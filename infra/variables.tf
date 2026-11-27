@@ -68,7 +68,7 @@ variable "alert_email" {
 }
 
 variable "app_secrets_ready" {
-  description = "Attach existing enabled MongoDB and worker secret versions to services."
+  description = "Attach existing worker secret version to Backend and Worker."
   type        = bool
   default     = false
 }
@@ -108,10 +108,10 @@ variable "worker_push_path" {
 
 variable "derivative_prefix" {
   type    = string
-  default = "thumbnail/"
+  default = "thumbnails/"
   validation {
-    condition     = length(var.derivative_prefix) > 1 && endswith(var.derivative_prefix, "/") && var.derivative_prefix != "original/"
-    error_message = "Use a nonempty derivative-only prefix ending with /."
+    condition     = var.derivative_prefix == "thumbnails/"
+    error_message = "Use thumbnails/ to match the generated PostgreSQL object keys."
   }
 }
 

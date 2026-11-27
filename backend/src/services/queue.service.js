@@ -1,33 +1,33 @@
 const pubsub = require("../config/pubsub");
 
-async function publishPhotoUploaded(photo) {
-  const topicName = process.env.PUBSUB_TOPIC;
-  if (!topicName) {
-    // Local development can run without Pub/Sub. Set topic to enable worker dispatch.
-    return { published: false, messageId: null, reason: "PUBSUB_TOPIC is not configured" };
-  }
-
-  const payload = {
+function photoUploadedPayload(photo) {
+  const bucket = process.env.GCS_BUCKET_NAME;
+  if (!bucket) throw new Error("GCS_BUCKET_NAME is missing");
+  return {
     eventType: "PHOTO_UPLOADED",
     eventVersion: 1,
     photoId: String(photo._id),
+    jobId: photo.jobId,
     albumId: String(photo.albumId),
     userId: photo.ownerId,
-    bucket: process.env.GCS_BUCKET_NAME,
+    bucket,
     originalObject: photo.originalObject,
     mimeType: photo.mimeType,
     createdAt: photo.createdAt.toISOString()
   };
-
-  const messageId = await pubsub.topic(topicName).publishMessage({
-    data: Buffer.from(JSON.stringify(payload)),
-    attributes: {
-      eventType: "PHOTO_UPLOADED",
-      photoId: String(photo._id)
-    }
-  });
-
-  return { published: true, messageId };
 }
 
-module.exports = { publishPhotoUploaded };
+async function publishPhotoUploaded(payload) {
+  const topicName = process.env.PUBSUB_TOPIC;
+  if (!topicName) throw new Error("PUBSUB_TOPIC is missing");
+  return pubsub.topic(topicName).publishMessage({
+    data: Buffer.from(JSON.stringify(payload)),
+    attributes: {
+      eventType: payload.eventType,
+      photoId: payload.photoId,
+      eventId: payload.photoId
+    }
+  });
+}
+
+module.exports = { photoUploadedPayload, publishPhotoUploaded };

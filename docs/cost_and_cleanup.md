@@ -14,11 +14,9 @@
 | Secret Manager | Ba active versions × $0,06, 2.000 access operations × $0,03/10.000 | 0,19 |
 | Scheduler + observability | Một Scheduler job $0,10; dự phòng $2,00 cho khoảng 0,5 GiB log, hai custom gauges tần suất thấp, alert và các query dashboard | 2,10 |
 | **GCP cơ sở** | Chưa gồm database và NAT | **5,02** |
-| Cloud SQL PostgreSQL 15 Enterprise, ZONAL, tùy chọn | Shared core db-f1-micro 730 × $0,015; SSD 10 GiB × $0,23; backup 5 GiB × $0,10; giữ bảy backup. Giả định backup thực dùng 5 GiB, không nhân lên theo dung lượng provisioned | **13,75** |
-| Cloud NAT cho Atlas public, tùy chọn | IPv4 730 × $0,005; dự phòng gateway theo mức sử dụng tối đa 1 equivalent trong 730 giờ × $0,0014; 5 GiB qua NAT × $0,045 | **4,90** |
-| MongoDB Atlas | Hóa đơn riêng theo tier, region, backup, egress và limit của nhóm. Nếu đủ điều kiện free tier thì có thể $0; kiểm tra Atlas. Thay bằng chi phí thực khi nộp. | theo tier |
+| Cloud SQL PostgreSQL 15 Enterprise, ZONAL | Shared core db-f1-micro 730 × $0,015; SSD 10 GiB × $0,23; backup 5 GiB × $0,10; giữ bảy backup. Giả định backup thực dùng 5 GiB, không nhân lên theo dung lượng provisioned | **13,75** |
 
-Tổng dự toán **$18,77/tháng với SQL và không NAT**, hoặc **$9,92/tháng cộng Atlas** khi dùng NAT. GitHub Actions và Microsoft Entra theo quota/tier của tổ chức. Mức dùng job/retention/p95 load khác giả định thì thay số trước khi trình bày. Cấu hình demo không có Cloud Load Balancer riêng. Dashboard memory/CPU và Billing Reports dùng để đối chiếu.
+Ví dụ cũ ước tính $18,77/tháng trước khi tính thêm Cloud Run Job và lịch chạy Outbox mỗi phút. Đối chiếu các lượt chạy Job và Cloud Scheduler khi lập ngân sách thực tế. GitHub Actions và Microsoft Entra theo quota/tier của tổ chức. Mức dùng job/retention/p95 load khác giả định thì thay số trước khi trình bày. Cấu hình demo không có Cloud Load Balancer riêng. Dashboard memory/CPU và Billing Reports dùng để đối chiếu.
 
 Trong Billing → Budgets & alerts, tạo ngân sách project ví dụ $25 USD/tháng, gửi email ở 50%, 80%, 100% thực tế và ngưỡng forecast. **Budget alert không phải hard cap.** Dừng test dài hạn bằng thời lượng/giới hạn instances và destroy staging khi xong. Giá tham khảo: [Cloud Run](https://cloud.google.com/run/pricing) · [Storage](https://cloud.google.com/storage/pricing) · [Pub/Sub](https://cloud.google.com/pubsub/pricing) · [Cloud SQL](https://cloud.google.com/sql/pricing) · [Artifact Registry](https://cloud.google.com/artifact-registry/pricing) · [NAT](https://cloud.google.com/nat/pricing) · [Secret Manager](https://cloud.google.com/secret-manager/pricing) · [Monitoring](https://cloud.google.com/stackdriver/pricing) · [Scheduler](https://cloud.google.com/scheduler/pricing).
 
@@ -61,4 +59,4 @@ gcloud pubsub subscriptions list --project "$PROJECT"
 gcloud secrets list --project "$PROJECT"
 ```
 
-Đối chiếu prefix của deployment đã xóa. Kiểm tra Cloud SQL retained/on-demand backup hoặc final backup trong Console nếu nhóm đã cấu hình giữ, bucket state riêng và log sink/export ngoài Terraform. Nếu bật Atlas, dọn cluster/backup, DB user và NAT allowlist trong Atlas sau thời hạn nghiệm thu. Xóa GitHub vars/Entra demo registration riêng nếu không dùng chung; xác minh chính sách retention của log và WIF soft delete. Terraform giữ API enable để những workload khác trong project tiếp tục hoạt động. Xem Billing Reports sau khi chi phí đã cập nhật, đối chiếu theo SKU và ngày destroy.
+Đối chiếu prefix của deployment đã xóa. Kiểm tra Cloud SQL retained/on-demand backup hoặc final backup trong Console nếu nhóm đã cấu hình giữ, bucket state riêng và log sink/export ngoài Terraform. Xóa GitHub vars/Entra demo registration riêng nếu không dùng chung; xác minh chính sách retention của log và WIF soft delete. Terraform giữ API enable để những workload khác trong project tiếp tục hoạt động. Xem Billing Reports sau khi chi phí đã cập nhật, đối chiếu theo SKU và ngày destroy.

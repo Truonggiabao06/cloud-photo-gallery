@@ -44,7 +44,7 @@ def stamp():
 def fixture(index, invalid=False):
     if invalid:
         return f"fixture: invalid jpeg {index}\n".encode()
-    width, height = 640, 480
+    width, height = 1000, 750
     img = Image.new("RGB", (width, height))
     img.paste((index, 80, 170), (0, 0, width, height))
     img.paste((205, index, 90), (40 + index, 20, 400, 300))
@@ -106,10 +106,12 @@ class API:
     def upload(self, album, name, content):
         result = self.call("POST", "/api/photos/upload", (201,), data={"albumId": album},
                            files={"image": (name, content, "image/jpeg")})
-        require(result["queue"]["published"] is True, "Backend did not publish the processing event")
+        queue = result["queue"]
+        require(queue.get("queued") is True or queue.get("published") is True,
+                "Backend did not accept the processing event")
         photo = result["photo"]
         return {"id": photo["id"], "name": name, "submittedAt": utc(),
-                "initialStatus": photo["status"], "messageId": result["queue"]["messageId"]}
+                "initialStatus": photo["status"], "messageId": queue.get("messageId")}
 
     def list_photos(self, album):
         return self.call("GET", "/api/photos", params={"albumId": album})["photos"]
@@ -150,7 +152,7 @@ def object_url(bucket, key):
 
 
 def derivative_keys(prefix, photo_id):
-    return {f"{prefix}{photo_id}/small.jpg", f"{prefix}{photo_id}/large.jpg"}
+    return {f"{prefix}{photo_id}/{variant}.webp" for variant in ("small", "large")}
 
 
 def derivatives(client, bucket, prefix, photo_id):
@@ -262,6 +264,18 @@ def security(api, args, album, valid, derivative_set, report):
         key: api.check_unsigned(object_url(args.bucket, key), (403,)) for key in sorted(derivative_set)
     }
 
+    member_id = api.call("GET", "/api/auth/me", actor="other")["user"]["id"]
+    invitation = api.call("POST", f"/api/albums/{album}/members", json={"memberId": member_id})
+    require(invitation["member"]["role"] == "VIEWER", "Expected a viewer invitation")
+    report["invited viewer album"] = api.call("GET", f"/api/albums/{album}", actor="other")["album"]["_id"]
+    viewer_photos = api.call("GET", "/api/photos", actor="other", params={"albumId": album})["photos"]
+    require(any(row["_id"] == valid["_id"] for row in viewer_photos), "Viewer cannot list shared photos")
+    report["invited viewer status"] = api.call("GET", f"{photo_path}/status", actor="other")["status"]
+    report["invited viewer upload"] = api.call(
+        "POST", "/api/photos/upload", (403, 404), actor="other",
+        data={"albumId": album}, files={"image": ("denied.jpg", fixture(0), "image/jpeg")}
+    )
+
 
 def stage(report, name, operation):
     block = {"startedAt": utc(), "passed": False}
@@ -333,11 +347,11 @@ def run_suite(api, args, report):
             for photo_id in ids:
                 sizes = {}
                 for variant in ("small", "large"):
-                    key = f"{args.prefix}{photo_id}/{variant}.jpg"
+                    key = f"{args.prefix}{photo_id}/{variant}.webp"
                     content = client_bucket.blob(key).download_as_bytes(timeout=20)
                     with Image.open(io.BytesIO(content)) as thumbnail:
                         thumbnail.load()
-                        require(thumbnail.format == "JPEG", "Derivative must be a decodable JPEG")
+                        require(thumbnail.format == "WEBP", "Derivative must be a decodable WebP")
                         sizes[variant] = max(thumbnail.size)
                 if sizes != {"small": args.small_size, "large": args.large_size}:
                     bad.append(photo_id)
@@ -469,15 +483,15 @@ def entrypoint():
     suite.add_argument("--project", default=os.getenv("QA_PROJECT"))
     suite.add_argument("--bucket", default=os.getenv("QA_BUCKET"))
     suite.add_argument("--topic", default=os.getenv("QA_TOPIC"))
-    suite.add_argument("--prefix", default=os.getenv("QA_DERIVATIVE_PREFIX", "thumbnail/"))
+    suite.add_argument("--prefix", default=os.getenv("QA_DERIVATIVE_PREFIX", "thumbnails/"))
     suite.add_argument("--worker-service", default=os.getenv("QA_WORKER_SERVICE"))
     suite.add_argument("--worker-url", default=os.getenv("QA_WORKER_URL"))
     suite.add_argument("--worker-path", default="/pubsub/push")
     suite.add_argument("--timeout", type=int, default=300)
     suite.add_argument("--poll", type=int, default=5)
     suite.add_argument("--replay-timeout", type=int, default=180)
-    suite.add_argument("--small-size", type=int, default=160)
-    suite.add_argument("--large-size", type=int, default=480)
+    suite.add_argument("--small-size", type=int, default=200)
+    suite.add_argument("--large-size", type=int, default=800)
     suite.add_argument("--check-bucket-iam", action="store_true")
     perf = subs.add_parser("load")
     perf.add_argument("--from-run", type=Path, required=True)
@@ -508,7 +522,7 @@ def entrypoint():
                              args.worker_url]), "Set all QA_* settings listed in the deploy guide")
                 require(args.worker_url.startswith("https://") and args.worker_path.startswith("/")
                         and args.prefix.endswith("/") and min(args.timeout, args.poll, args.replay_timeout) > 0
-                        and 0 < args.small_size < args.large_size < 640,
+                        and 0 < args.small_size < args.large_size <= 1000,
                         "Invalid Worker URL/path, derivative prefix or timeout")
                 passed = run_suite(api, args, report)
             elif args.mode == "load":

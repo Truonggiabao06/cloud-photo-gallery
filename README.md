@@ -10,4 +10,4 @@ Bắt đầu tại [hướng dẫn triển khai](docs/deploy_guide.md). Dùng m�
 
 `backend/` chứa bản hiện tại của TV 2, với mã ứng dụng giữ nguyên và bổ sung Dockerfile, lockfile và hai ngoại lệ Git cho manifest. `frontend/` và `worker/` chứa mẫu container và hướng dẫn tích hợp cho TV 1/3. `infra/` dựng hạ tầng và `tests/` chạy QA từ Cloud Shell. Trước khi TV 1/3 đưa code vào, Cloud Run dùng image bootstrap. Chỉ bật Pub/Sub push sau khi Worker thật đã lên.
 
-Mốc nghiệm thu cần TV 1–4 hoàn thiện giao diện, quyền invited viewer, hai thumbnail, Outbox, sổ dedup và log Worker. Bản MongoDB của TV 2 phục vụ smoke test. Cloud SQL PostgreSQL 15 là tuỳ chọn hạ tầng và cần bản ứng dụng đã chuyển driver/schema trước khi sử dụng. Chạy QA trên bản tích hợp và nộp kết quả sinh từ lần chạy thật.
+Backend dùng Cloud SQL PostgreSQL 15 với schema thành viên 4 và migration tích hợp. Xem [cách chạy PostgreSQL](docs/postgresql.md) và chạy QA trên môi trường thực tế để lấy bằng chứng.

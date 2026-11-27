@@ -2,7 +2,7 @@
 
 ## Stack
 - Node.js + Express
-- MongoDB Atlas
+- PostgreSQL 15
 - Google Cloud Storage
 - Google Pub/Sub
 - Microsoft Entra ID access-token validation
@@ -35,8 +35,8 @@ Register a Web API application in Entra:
 
 This backend validates v2.0 tenant-specific tokens. If your Entra registration issues v1.0 tokens, configure the matching v1 metadata issuer/JWKS instead; do not simply disable issuer validation.
 
-## 4. MongoDB
-Create a MongoDB Atlas database user and allow the development machine's IP in Network Access. Put the connection string in `MONGODB_URI`. URL-encode special characters in the database password.
+## 4. PostgreSQL
+Apply the schema and migration in the [PostgreSQL guide](../docs/postgresql.md), then set `DATABASE_URL` in `.env`. URL-encode special characters in the database password.
 
 ## 5. Run
 ```bash
@@ -54,6 +54,7 @@ npm run dev
 | POST | `/api/albums` | Entra Bearer token |
 | GET | `/api/albums` | Entra Bearer token |
 | GET | `/api/albums/:id` | Entra Bearer token |
+| POST | `/api/albums/:id/members` | Album owner |
 | POST | `/api/photos/upload` | Entra Bearer token |
 | GET | `/api/photos` | Entra Bearer token |
 | GET | `/api/photos/:id/status` | Entra Bearer token |
@@ -83,8 +84,9 @@ Pub/Sub message data is JSON:
 {
   "eventType": "PHOTO_UPLOADED",
   "eventVersion": 1,
-  "photoId": "MongoDB photo id",
-  "albumId": "MongoDB album id",
+  "photoId": "PostgreSQL photo UUID",
+  "jobId": "PostgreSQL job UUID",
+  "albumId": "PostgreSQL album UUID",
   "userId": "Entra subject",
   "bucket": "GCS bucket",
   "originalObject": "original/<user>/<album>/<uuid>.jpg",
@@ -103,7 +105,8 @@ When done:
 {
   "status": "COMPLETED",
   "progress": 100,
-  "thumbnailObject": "thumbnail/<photo-id>.jpg"
+  "thumbnailSmallObject": "thumbnails/<photo-id>/small.webp",
+  "thumbnailLargeObject": "thumbnails/<photo-id>/large.webp"
 }
 ```
 On failure:
