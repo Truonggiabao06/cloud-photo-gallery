@@ -23,8 +23,16 @@ async function createPhotoJob(details) {
   });
 }
 
-async function updatePhotoJob(id, update) {
+async function updatePhotoJob(id, update, leaseId) {
   return transaction(async db => {
+    if (leaseId) {
+      const { rowCount } = await db.query(`
+        UPDATE outbox_events SET locked_at = now()
+        WHERE id = $1 AND lease_id = $2 AND status = 'PROCESSING'
+          AND locked_at > now() - interval '3 minutes'
+      `, [id, leaseId]);
+      if (!rowCount) return { leaseLost: true };
+    }
     const { rows: [existing] } = await db.query(`
       SELECT i.id AS "_id", i.status, i.progress, j.id AS "jobId"
       FROM images i LEFT JOIN processing_jobs j ON j.image_id = i.id
@@ -56,7 +64,7 @@ async function updatePhotoJob(id, update) {
     if (terminal) {
       await db.query(`INSERT INTO processed_events (event_id, idempotency_key, image_id, event_type, payload)
         VALUES ($1::text, 'PHOTO_UPLOADED:' || $1::text, $1::uuid, 'PHOTO_UPLOADED', $2)`,
-      [id, { photoId: id, jobId, status }]);
+      [id, { photoId: id, jobId, status, thumbnailBytes: update.thumbnailBytes }]);
     }
     return { photo: { _id: id, jobId, status, progress }, alreadyTerminal: false, terminalCommit: terminal };
   });

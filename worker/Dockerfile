@@ -9,4 +9,4 @@ RUN pip install --no-cache-dir --no-compile -r requirements.txt
 COPY --chown=65532:65532 . .
 USER 65532:65532
 EXPOSE 8080
-CMD ["sh", "-c", "exec gunicorn --bind 0.0.0.0:${PORT:-8080} --workers 1 --timeout 105 'push_app:create_app()'"]
+CMD ["sh", "-c", "case ${WORKER_MODE:-pubsub} in outbox) app=render_app;; pubsub) app=push_app;; *) exit 2;; esac; exec gunicorn --bind 0.0.0.0:${PORT:-8080} --workers 1 --threads 2 --timeout 105 \"$app:create_app()\""]

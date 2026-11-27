@@ -7,6 +7,8 @@ const { requireAuth, requireWorker } = require("../middleware/auth");
 const { uploadImage, createSignedReadUrl, deleteObject } = require("../services/storage.service");
 const { createPhotoJob, updatePhotoJob } = require("../services/photo-jobs.service");
 
+const { wakeWorker } = require("../services/worker-wake.service");
+
 const router = express.Router();
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -69,6 +71,7 @@ router.post("/upload", requireAuth, upload.single("image"), async (req, res, nex
       checksumSha256: crypto.createHash("sha256").update(req.file.buffer).digest("hex")
     });
 
+    wakeWorker();
     res.status(201).json({
       success: true,
       message: "Image uploaded",
@@ -197,7 +200,11 @@ router.get("/:id/status", requireAuth, async (req, res, next) => {
 router.patch("/:id/worker-status", requireWorker, async (req, res, next) => {
   try {
     const allowed = ["PENDING", "PROCESSING", "COMPLETED", "FAILED"];
-    const { status, progress, thumbnailObject, thumbnailSmallObject, thumbnailLargeObject, errorMessage } = req.body;
+    const { status, progress, thumbnailObject, thumbnailSmallObject, thumbnailLargeObject, errorMessage, thumbnailBytes } = req.body;
+    const leaseId = req.get("x-outbox-lease");
+    if (process.env.STORAGE_BACKEND === "s3" && !gallery.isUuid(leaseId)) {
+      return res.status(409).json({ success: false, message: "Outbox lease required" });
+    }
 
     if (!allowed.includes(status)) {
       return res.status(400).json({ success: false, message: "Invalid status" });
@@ -219,12 +226,21 @@ router.patch("/:id/worker-status", requireWorker, async (req, res, next) => {
       const id = req.params.id.toLowerCase();
       const expectedSmall = `thumbnails/${id}/small.webp`;
       const expectedLarge = `thumbnails/${id}/large.webp`;
+      if (process.env.STORAGE_BACKEND === "s3" &&
+          (!Number.isSafeInteger(thumbnailBytes) || thumbnailBytes < 1 || thumbnailBytes > 10485760)) {
+        return res.status(400).json({ success: false, message: "Valid thumbnailBytes is required" });
+      }
+      if (Number.isSafeInteger(thumbnailBytes) && thumbnailBytes > 0 && thumbnailBytes <= 10485760) {
+        update.thumbnailBytes = thumbnailBytes;
+      }
       if (thumbnailSmallObject !== expectedSmall || (thumbnailLargeObject || thumbnailObject) !== expectedLarge) {
         return res.status(400).json({ success: false, message: "Both deterministic thumbnail keys are required" });
       }
     }
 
-    const { photo, alreadyTerminal, terminalCommit } = await updatePhotoJob(req.params.id, update);
+    const { photo, alreadyTerminal, terminalCommit, leaseLost } = await updatePhotoJob(req.params.id, update,
+      process.env.STORAGE_BACKEND === "s3" ? leaseId : undefined);
+    if (leaseLost) return res.status(409).json({ success: false, message: "Outbox lease expired" });
     if (!photo) return res.status(404).json({ success: false, message: "Photo not found" });
 
     res.json({
