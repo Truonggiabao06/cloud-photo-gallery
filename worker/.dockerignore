@@ -1,6 +1,12 @@
 *
 !Dockerfile
-!package.json
-!package-lock.json
-!src/
-!src/**
+!requirements.txt
+!config.py
+!event_contract.py
+!main.py
+!push_app.py
+!worker_service.py
+!processors/
+!processors/*.py
+!services/
+!services/*.py

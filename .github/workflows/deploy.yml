@@ -76,7 +76,17 @@ jobs:
                   exit 1
                 fi
                 ;;
-              backend|worker)
+              worker)
+                if [[ -f worker/push_app.py && -f worker/requirements.txt && -f worker/Dockerfile ]]; then
+                  selected+=(worker)
+                elif [[ "$REQUESTED" == worker || -f worker/push_app.py ]]; then
+                  echo "::error::Worker requires push_app.py, requirements.txt and Dockerfile"
+                  exit 1
+                else
+                  echo "::notice::Worker template has no HTTP push application yet"
+                fi
+                ;;
+              backend)
                 if [[ -f "$service/package.json" && -f "$service/package-lock.json" && -f "$service/Dockerfile" ]]; then
                   selected+=("$service")
                 elif [[ "$REQUESTED" == "$service" || -f "$service/package.json" ]]; then
