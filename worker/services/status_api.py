@@ -10,11 +10,13 @@ from config import Settings
 
 
 class WorkerStatusClient:
-    def __init__(self, settings: Settings, *, session: requests.Session | None = None) -> None:
+    def __init__(self, settings: Settings, *, session: requests.Session | None = None, lease_id: str | None = None) -> None:
         self.base_url = settings.api_base_url
         self.timeout = settings.api_timeout_seconds
         self.session = session or requests.Session()
         self._session_lock = threading.Lock()
+        if lease_id:
+            self.session.headers["x-outbox-lease"] = lease_id
 
         retry = Retry(
             total=3,

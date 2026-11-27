@@ -1,3 +1,4 @@
+const { createHash, timingSafeEqual } = require("node:crypto");
 const jwt = require("jsonwebtoken");
 const jwksClient = require("jwks-rsa");
 
@@ -64,7 +65,8 @@ function requireWorker(req, res, next) {
   const expected = process.env.WORKER_SHARED_SECRET;
   const received = req.get("x-worker-secret");
 
-  if (!expected || !received || received !== expected) {
+  const digest = value => createHash("sha256").update(value).digest();
+  if (!expected || !received || !timingSafeEqual(digest(received), digest(expected))) {
     return res.status(401).json({ success: false, message: "Worker authentication failed" });
   }
   next();

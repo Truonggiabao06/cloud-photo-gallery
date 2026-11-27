@@ -18,13 +18,14 @@ class PermanentMessageError(Exception):
 
 
 class PhotoWorker:
-    def __init__(self, storage, status_client, *, max_image_pixels: int = 40_000_000) -> None:
+    def __init__(self, storage, status_client, *, max_image_pixels: int = 40_000_000, before_write=None) -> None:
         self.storage = storage
         self.status_client = status_client
         self.max_image_pixels = max_image_pixels
+        self.before_write = before_write
 
     @staticmethod
-    def _log_terminal(event: dict, result: dict | None, status: str) -> None:
+    def log_terminal(event: dict, result: dict | None, status: str) -> None:
         if not result or not result.get("terminalCommit"):
             return
         photo_id = event["photoId"]
@@ -41,7 +42,7 @@ class PhotoWorker:
             "progress": 0,
             "errorMessage": reason[:500],
         })
-        self._log_terminal(event, result, "FAILED")
+        self.log_terminal(event, result, "FAILED")
 
     def process(self, event: dict) -> dict[str, str]:
         photo_id = str(event.get("photoId", "")).lower()
@@ -80,10 +81,10 @@ class PhotoWorker:
             self._mark_failed(event, photo_id, str(exc))
             raise PermanentMessageError(str(exc)) from exc
 
-        # GCS create-only writes make redelivery safe. Existing deterministic outputs
-        # are validated by GCSImageStorage before being reused.
-        self.storage.save_thumbnail(bucket, small_key, small)
-        self.storage.save_thumbnail(bucket, large_key, large)
+        for key, thumbnail in ((small_key, small), (large_key, large)):
+            if self.before_write:
+                self.before_write()
+            self.storage.save_thumbnail(bucket, key, thumbnail)
 
         self.status_client.update(photo_id, {"status": "PROCESSING", "progress": 90})
         result = self.status_client.update(photo_id, {
@@ -92,8 +93,9 @@ class PhotoWorker:
             "thumbnailObject": large_key,
             "thumbnailSmallObject": small_key,
             "thumbnailLargeObject": large_key,
+            **({"thumbnailBytes": len(small.data) + len(large.data)} if self.before_write else {}),
         })
-        self._log_terminal(event, result, "COMPLETED")
+        self.log_terminal(event, result, "COMPLETED")
 
         logger.info("Processed photo %s: small=%s large=%s", photo_id, small_key, large_key)
         return {"small": small_key, "large": large_key}

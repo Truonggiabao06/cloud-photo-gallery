@@ -1,8 +1,9 @@
 const pubsub = require("../config/pubsub");
 
 function photoUploadedPayload(photo) {
-  const bucket = process.env.GCS_BUCKET_NAME;
-  if (!bucket) throw new Error("GCS_BUCKET_NAME is missing");
+  const bucketVar = process.env.STORAGE_BACKEND === "s3" ? "S3_BUCKET" : "GCS_BUCKET_NAME";
+  const bucket = process.env[bucketVar];
+  if (!bucket) throw new Error(`${bucketVar} is missing`);
   return {
     eventType: "PHOTO_UPLOADED",
     eventVersion: 1,
