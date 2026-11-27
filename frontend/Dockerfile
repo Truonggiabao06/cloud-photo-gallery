@@ -1,19 +1,17 @@
 FROM node:24-bookworm-slim AS build
 WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci
-COPY . .
+COPY index.html build-config.cjs ./
+COPY css ./css
+COPY js ./js
 ARG VITE_API_BASE_URL
 ARG VITE_ENTRA_TENANT_ID
 ARG VITE_ENTRA_CLIENT_ID
 ARG VITE_ENTRA_API_SCOPE
-ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
-ENV VITE_ENTRA_TENANT_ID=$VITE_ENTRA_TENANT_ID
-ENV VITE_ENTRA_CLIENT_ID=$VITE_ENTRA_CLIENT_ID
-ENV VITE_ENTRA_API_SCOPE=$VITE_ENTRA_API_SCOPE
-RUN npm run build
+RUN node build-config.cjs
 
 FROM nginxinc/nginx-unprivileged:1.28-alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=build /app/dist/ /usr/share/nginx/html/
+COPY --from=build /app/index.html /usr/share/nginx/html/index.html
+COPY --from=build /app/css/ /usr/share/nginx/html/css/
+COPY --from=build /app/js/ /usr/share/nginx/html/js/
 EXPOSE 8080

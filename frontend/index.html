@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#101828" />
+    <title>Cloud Photo Gallery — Frontend</title>
+    <link rel="stylesheet" href="./css/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <aside class="sidebar" id="sidebar">
+        <a href="#photos" class="brand">
+          <span class="brand-icon">◈</span>
+          <span>CloudGallery<small>Photo workspace</small>
+          </span>
+        </a>
+        <nav aria-label="Điều hướng chính">
+          <button class="nav-item active" data-view="photos">
+            <span>▦</span> Tất cả ảnh</button>
+            <button class="nav-item" data-view="albums">
+              <span>▤</span> Album</button>
+              <button class="nav-item" data-view="jobs">
+                <span>◷</span> Trạng thái xử lý</button>
+              </nav>
+              <div class="sidebar-bottom">
+                <div class="mode-chip" id="modeChip">● DEMO MODE</div>
+                <p>Frontend nhóm • Thành viên 1</p>
+                <button class="text-btn" id="settingsBtn">⚙ Cấu hình API</button>
+              </div>
+            </aside>
+            <div class="workspace">
+              <header class="topbar">
+                <button class="icon-btn mobile-menu" id="menuBtn" aria-label="Mở menu">☰</button>
+                <div class="breadcrumbs">Không gian ảnh <span>/</span> <strong id="breadcrumbCurrent">Tất cả ảnh</strong>
+                </div>
+                <div class="header-actions">
+                  <span class="user-avatar" aria-label="Tài khoản demo">CG</span>
+                </div>
+              </header>
+              <main class="main">
+                <div class="page-heading">
+                  <div>
+                    <p class="eyebrow">PHOTO COLLECTION</p>
+                    <h1 id="pageTitle">Tất cả ảnh</h1>
+                    <p class="subtitle" id="pageSubtitle">Lưu giữ và quản lý những khoảnh khắc của bạn.</p>
+                  </div>
+                  <div class="heading-actions">
+                    <button class="btn secondary" id="newAlbumBtn">＋ Tạo album</button>
+                    <button class="btn primary" id="uploadBtn">↑ Tải ảnh lên</button>
+                  </div>
+                </div>
+                <div class="stats" id="stats">
+                  <div class="stat">
+                    <span>Tổng số ảnh</span>
+                    <strong id="statImages">0</strong>
+                  </div>
+                  <div class="stat">
+                    <span>Album</span>
+                    <strong id="statAlbums">0</strong>
+                  </div>
+                  <div class="stat">
+                    <span>Đang xử lý</span>
+                    <strong id="statPending">0</strong>
+                  </div>
+                  <div class="stat">
+                    <span>Hoàn thành</span>
+                    <strong id="statComplete">0</strong>
+                  </div>
+                </div>
+                <div class="toolbar">
+                  <label class="search-wrap">⌕ <input id="searchInput" type="search" placeholder="Tìm ảnh hoặc album..." aria-label="Tìm kiếm" />
+                </label>
+                <select id="statusFilter" aria-label="Lọc trạng thái">
+                  <option value="all">Tất cả trạng thái</option>
+                  <option value="completed">Hoàn thành</option>
+                  <option value="processing">Đang xử lý</option>
+                  <option value="pending">Đang chờ</option>
+                  <option value="failed">Thất bại</option>
+                </select>
+              </div>
+              <section id="content" aria-live="polite">
+              </section>
+            </main>
+          </div>
+        </div>
+        <div class="toast-area" id="toastArea" aria-live="polite">
+        </div>
+        <dialog id="uploadDialog" class="modal">
+          <form id="uploadForm" class="modal-body">
+            <div class="modal-head">
+              <h2>Tải ảnh lên Cloud</h2>
+              <button type="button" class="close-btn" data-close="uploadDialog">✕</button>
+            </div>
+            <p class="muted">Chọn ảnh JPG, PNG hoặc WebP (tối đa 10 MB mỗi ảnh).</p>
+            <label class="dropzone" for="fileInput">
+              <span class="drop-icon">↑</span>
+              <strong>Chọn ảnh từ thiết bị</strong>
+              <small>Nhấp vào đây để chọn nhiều ảnh</small>
+            </label>
+            <input id="fileInput" type="file" accept="image/jpeg,image/png,image/webp" multiple hidden />
+            <div id="fileList" class="file-list">
+            </div>
+            <label class="field-label">Album (không bắt buộc)<select id="uploadAlbum">
+              <option value="">Không chọn album</option>
+            </select>
+          </label>
+          <div id="uploadProgressArea" class="progress-area" hidden>
+            <div class="progress-head">
+              <span id="uploadProgressLabel">Đang tải lên...</span>
+              <strong id="uploadProgressPct">0%</strong>
+            </div>
+            <div class="progress-track">
+              <div id="uploadProgressBar">
+              </div>
+            </div>
+          </div>
+          <footer class="modal-actions">
+            <button type="button" class="btn secondary" data-close="uploadDialog">Đóng</button>
+            <button type="submit" class="btn primary" id="startUploadBtn">Bắt đầu tải lên</button>
+          </footer>
+        </form>
+      </dialog>
+      <dialog id="albumDialog" class="modal narrow">
+        <form id="albumForm" class="modal-body">
+          <div class="modal-head">
+            <h2>Tạo album mới</h2>
+            <button type="button" class="close-btn" data-close="albumDialog">✕</button>
+          </div>
+          <label class="field-label">Tên album <input id="albumName" maxlength="80" required placeholder="Ví dụ: Chuyến đi Đà Lạt" />
+        </label>
+        <label class="field-label">Mô tả <textarea id="albumDesc" rows="3" maxlength="300" placeholder="Mô tả ngắn (tùy chọn)">
+        </textarea>
+      </label>
+      <footer class="modal-actions">
+        <button type="button" class="btn secondary" data-close="albumDialog">Hủy</button>
+        <button type="submit" class="btn primary">Tạo album</button>
+      </footer>
+    </form>
+  </dialog>
+  <dialog id="detailDialog" class="modal detail-modal">
+    <div class="modal-body">
+      <div class="modal-head">
+        <h2 id="detailTitle">Chi tiết ảnh</h2>
+        <button type="button" class="close-btn" data-close="detailDialog">✕</button>
+      </div>
+      <div class="detail-layout">
+        <div id="detailPreview" class="detail-preview">
+        </div>
+        <div id="detailInfo" class="detail-info">
+        </div>
+      </div>
+    </div>
+  </dialog>
+  <dialog id="settingsDialog" class="modal narrow">
+    <form id="settingsForm" class="modal-body">
+      <div class="modal-head">
+        <h2>Cấu hình kết nối</h2>
+        <button type="button" class="close-btn" data-close="settingsDialog">✕</button>
+      </div>
+      <label class="field-label">Chế độ<select id="settingMode">
+        <option value="demo">Demo (dữ liệu mẫu)</option>
+        <option value="api">API thực của nhóm</option>
+      </select>
+    </label>
+    <label class="field-label">Backend API Base URL<input id="settingApiUrl" placeholder="http://localhost:3000/api" />
+  </label>
+  <label class="field-label">Access token (để thử nghiệm tích hợp)<input id="settingToken" type="password" autocomplete="off" placeholder="Access token Entra ID (bắt buộc ở API mode)" />
+</label>
+<p class="muted small">Token chỉ được giữ trong bộ nhớ trang hiện tại, không lưu vào localStorage. Với sản phẩm thật, nhóm cần tích hợp OIDC PKCE thay vì nhập token thủ công.</p>
+<footer class="modal-actions">
+  <button type="button" class="btn secondary" data-close="settingsDialog">Hủy</button>
+  <button type="submit" class="btn primary">Lưu và tải lại</button>
+</footer>
+</form>
+</dialog>
+<script src="js/vendor/msal-browser.min.js"></script>
+<script type="module" src="./js/app.js">
+</script>
+</body>
+</html>

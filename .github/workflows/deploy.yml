@@ -67,14 +67,26 @@ jobs:
             if [[ -z "$REQUESTED" ]] && ! grep -Eq "^($service/|\.github/workflows/deploy\.yml$)" /tmp/cloud-photo-changes; then
               continue
             fi
-            if [[ -f "$service/package.json" && -f "$service/package-lock.json" && -f "$service/Dockerfile" ]]; then
-              selected+=("$service")
-            elif [[ "$REQUESTED" == "$service" || -f "$service/package.json" ]]; then
-              echo "::error::Missing package.json, package-lock.json or Dockerfile under $service/"
-              exit 1
-            else
-              echo "::notice::$service template has no application yet"
-            fi
+            case "$service" in
+              frontend)
+                if [[ -f frontend/index.html && -f frontend/build-config.cjs && -f frontend/Dockerfile ]]; then
+                  selected+=(frontend)
+                elif [[ "$REQUESTED" == frontend || -f frontend/index.html ]]; then
+                  echo "::error::Frontend requires index.html, build-config.cjs and Dockerfile"
+                  exit 1
+                fi
+                ;;
+              backend|worker)
+                if [[ -f "$service/package.json" && -f "$service/package-lock.json" && -f "$service/Dockerfile" ]]; then
+                  selected+=("$service")
+                elif [[ "$REQUESTED" == "$service" || -f "$service/package.json" ]]; then
+                  echo "::error::Missing package.json, package-lock.json or Dockerfile under $service/"
+                  exit 1
+                else
+                  echo "::notice::$service template has no application yet"
+                fi
+                ;;
+            esac
           done
           services=$(jq -cn '$ARGS.positional' --args "${selected[@]}")
           echo "services=$services" >> "$GITHUB_OUTPUT"

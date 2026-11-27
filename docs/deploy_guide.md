@@ -99,12 +99,12 @@ terraform -chdir=infra output -json github_variables |
   while IFS=$'\t' read -r key value; do
     gh variable set "$key" --repo "$GH_REPO" --body "$value" || exit 1
   done
-read -rp 'Entra SPA application client ID: ' SPA_CLIENT_ID
+read -rp 'Entra SPA application client ID (ZIP nhóm: 3430b068-b6f1-4df0-a4d7-c189af8dcd07): ' SPA_CLIENT_ID
 gh variable set VITE_ENTRA_CLIENT_ID --repo "$GH_REPO" --body "$SPA_CLIENT_ID"
 gh variable list --repo "$GH_REPO"
 ```
 
-Dùng hướng dẫn [Frontend](../frontend/README.md) và [Worker](../worker/README.md) để nhập code và lockfile thật. Merge lên nhánh đã cấu hình với quy trình Git của nhóm. Một repo mới có thể dùng:
+Source tĩnh của Frontend được build từ index.html, CSS và JS theo [hướng dẫn Frontend](../frontend/README.md). Dùng [hướng dẫn Worker](../worker/README.md) để nhập Worker tương thích Pub/Sub push. Merge lên nhánh đã cấu hình với quy trình Git của nhóm. Một repo mới có thể dùng:
 
 ```bash
 git init -b main

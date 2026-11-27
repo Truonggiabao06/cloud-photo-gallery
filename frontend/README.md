@@ -1,12 +1,30 @@
-# Giao diện của TV 1
+# Cloud Photo Gallery Frontend
 
-Mẫu container này dự kiến dùng SPA Vite (React, Vue hoặc Vanilla). Đặt source, `package.json` và `package-lock.json` trong thư mục này. `npm run build` phải xuất `dist/`. Nếu dùng công cụ khác, điều chỉnh bước build và đường dẫn output trong Dockerfile. Nginx phục vụ SPA trên cổng 8080 và hỗ trợ tải lại route sâu.
+Ứng dụng HTML/CSS/JS của TV 1, lấy từ ZIP nhóm. Mở demo tại máy cá nhân từ thư mục gốc repo:
 
-| Biến build công khai | Nguồn |
+```powershell
+py -m http.server 5500 --bind 127.0.0.1 --directory .\frontend
+```
+
+Mở [http://localhost:5500/](http://localhost:5500/). Demo dùng dữ liệu mẫu trong bộ nhớ. Sau khi tải lại trang, giao diện khởi tạo lại dữ liệu.
+
+## Container và đăng nhập
+
+Frontend không cần Vite hoặc npm build. Dockerfile dùng Node để tạo module cấu hình công khai, sau đó dùng Nginx phục vụ HTML/CSS/JS ở cổng 8080. GitHub Actions dùng lại các biến tên `VITE_*` đã có trong bộ Terraform.
+
+| Biến build | Giá trị |
 | --- | --- |
-| `VITE_API_BASE_URL` | Cloud Run URL của Backend |
-| `VITE_ENTRA_TENANT_ID` | Directory ID của Entra |
-| `VITE_ENTRA_CLIENT_ID` | App registration của SPA, khác API client ID |
-| `VITE_ENTRA_API_SCOPE` | Delegated scope, mặc định `api://<API_APP_ID>/access_as_user` |
+| `VITE_API_BASE_URL` | HTTPS URL của Cloud Run Backend |
+| `VITE_ENTRA_TENANT_ID` | Directory (tenant) ID |
+| `VITE_ENTRA_CLIENT_ID` | Application (client) ID của app Frontend SPA |
+| `VITE_ENTRA_API_SCOPE` | Scope đầy đủ của Backend API, có dạng `api://<backend-client-id>/access_as_user` |
 
-TV 1 đăng ký redirect URI loại SPA đúng với URL Cloud Run và callback mà app sử dụng. MSAL lấy access token cho API rồi gọi Backend với `Authorization: Bearer …`. Backend hiện nhận multipart `albumId` và `image` ở `POST /api/photos/upload`. Poll `GET /api/photos/:id/status` theo nhịp có giới hạn, dừng khi `COMPLETED` hoặc `FAILED`. Khi TV 2 thêm signed PUT và finalize, thêm luồng direct upload với header precondition đã ký. CORS cho origin chính được Terraform quản lý. Truy cập ảnh dùng signed URL nhận từ API. Giữ token trong cơ chế cache phù hợp của MSAL, tránh log URL signed, và tuyệt đối giữ `WORKER_SHARED_SECRET` ngoài bundle.
+Mặc định cục bộ theo ZIP nhóm: app Frontend `3430b068-b6f1-4df0-a4d7-c189af8dcd07`, Backend API `9300ccc1-a0ef-491a-8740-a4c2c6ed4b80`, tenant `14d5de2b-d212-4175-92d5-156ea5b7c037`. Chủ app cần xác nhận quyền `access_as_user`, access token v2 của Backend và consent trong tenant. Các giá trị deploy lấy từ GitHub Actions Variables thay cho mặc định cục bộ.
+
+Đăng ký SPA redirect URI `http://localhost:5500/` để thử local, và URL gốc Frontend Cloud Run có dấu `/` ở cuối để deploy. Nút đăng nhập dùng MSAL để lấy access token đúng scope và kiểm tra `GET /api/auth/me` trước khi chuyển sang API mode. Frontend dùng multipart `albumId` và `image` cho upload. Bucket, quyền ký URL, Pub/Sub và Worker cần được thiết lập để thử lưu ảnh và xử lý trên GCP.
+
+## Cập nhật bản đang mở trong Antigravity
+
+Sao chép nội dung ZIP vào thư mục gốc `cloud-photo-gallery`, để `frontend/index.html` nằm ngay dưới `frontend/`. Khi sao chép xong, chạy `git status --short` để xem những file được cập nhật. Kiểm tra demo bằng lệnh đầu trang. Giữ file `infra/terraform.tfvars` của máy bạn ngoài Git.
+
+Bản này chuẩn bị việc deploy Frontend. Phần Backend đang dùng GCS/MongoDB trong repo là cơ sở hiện tại. Worker pull và SQL trong ZIP nhóm cần thống nhất với Backend trước khi bật Pub/Sub push hoặc chuyển database. Xem audit và hướng dẫn triển khai của repo.
