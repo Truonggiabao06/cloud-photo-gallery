@@ -61,6 +61,7 @@ resource "google_monitoring_metric_descriptor" "oldest_job" {
 }
 
 resource "google_project_iam_member" "write_metrics" {
+  project  = var.project_id
   for_each = toset(["meter", "worker"])
   role     = "roles/monitoring.metricWriter"
   member   = google_service_account.identity[each.key].member
