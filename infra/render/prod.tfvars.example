@@ -1,0 +1,19 @@
+environment          = "prod"
+project_name         = "photo07-gia"
+repo_url             = "https://github.com/Truonggiabao06/cloud-photo-gallery"
+deploy_branch        = "main"
+region               = "singapore"
+supabase_s3_endpoint = "https://exampleproject.storage.supabase.co/storage/v1/s3"
+supabase_s3_region   = "ap-southeast-1"
+supabase_bucket      = "photos"
+shared_env_group_id  = "evg-replaceme"
+
+# After the first apply, set these to the exact Terraform outputs.
+# frontend_origin = "https://YOUR-FRONTEND.onrender.com"
+# worker_wake_url = "https://YOUR-WORKER.onrender.com"
+
+entra = {
+  tenant_id          = "00000000-0000-0000-0000-000000000000"
+  api_client_id      = "00000000-0000-0000-0000-000000000000"
+  frontend_client_id = "00000000-0000-0000-0000-000000000000"
+}
