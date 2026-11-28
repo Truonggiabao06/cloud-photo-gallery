@@ -106,7 +106,7 @@ async function uploadFiles(e) {
                 await demo.addImage(f, albumId, update);
             else {
                 const result = await remoteApi.upload(f, albumId, update);
-                if (!result.queue?.published) toast('Ảnh đã lưu nhưng chưa được đưa vào hàng đợi xử lý.', 'error');
+                if (!result.queue?.queued && !result.queue?.published) toast('Ảnh đã lưu nhưng chưa được đưa vào hàng đợi xử lý.', 'error');
             }
             update(100);
         }

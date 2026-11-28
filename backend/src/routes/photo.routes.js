@@ -10,6 +10,7 @@ const { createPhotoJob, updatePhotoJob } = require("../services/photo-jobs.servi
 const { wakeWorker } = require("../services/worker-wake.service");
 
 const router = express.Router();
+const filenameDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024, files: 1 },
@@ -19,6 +20,16 @@ const upload = multer({
     cb(null, true);
   }
 });
+
+function decodeUploadFilename(filename) {
+  // Busboy may expose the UTF-8 bytes of a plain multipart filename as Latin-1.
+  if (/[^\u0000-\u00ff]/u.test(filename)) return filename;
+  try {
+    return filenameDecoder.decode(Buffer.from(filename, "latin1"));
+  } catch {
+    return filename;
+  }
+}
 
 /**
  * @swagger
@@ -51,10 +62,11 @@ router.post("/upload", requireAuth, upload.single("image"), async (req, res, nex
     const album = await gallery.findOwnedAlbum(req.user.id, req.body.albumId);
     if (!album) return res.status(404).json({ success: false, message: "Album not found or not owned by current user" });
 
-    if (req.file.originalname.length > 255) {
+    const originalName = decodeUploadFilename(req.file.originalname);
+    if (originalName.length > 255) {
       return res.status(400).json({ success: false, message: "Filename must be at most 255 characters" });
     }
-    const ext = path.extname(req.file.originalname).toLowerCase() || ".jpg";
+    const ext = path.extname(originalName).toLowerCase() || ".jpg";
     const objectName = `original/${req.user.id}/${album.id}/${crypto.randomUUID()}${ext}`;
     await uploadImage(req.file.buffer, objectName, req.file.mimetype);
     uploadedObject = objectName;
@@ -65,7 +77,7 @@ router.post("/upload", requireAuth, upload.single("image"), async (req, res, nex
       albumId: album.id,
       ownerId: req.user.id,
       originalObject: objectName,
-      originalName: req.file.originalname,
+      originalName,
       mimeType: req.file.mimetype,
       size: req.file.size,
       checksumSha256: crypto.createHash("sha256").update(req.file.buffer).digest("hex")
