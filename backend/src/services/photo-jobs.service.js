@@ -14,12 +14,12 @@ async function createPhotoJob(details) {
       details.originalName, details.mimeType, details.size, details.checksumSha256]);
     const { rows: [{ id: jobId }] } = await db.query(
       "INSERT INTO processing_jobs (image_id) VALUES ($1) RETURNING id", [photo._id]);
-    const payload = photoUploadedPayload({ ...photo, jobId });
+    const payload = photoUploadedPayload({ ...photo, jobId, requestId: details.requestId });
     await db.query(`
       INSERT INTO outbox_events (id, aggregate_type, aggregate_id, event_type, payload)
       VALUES ($1, 'IMAGE', $1, 'PHOTO_UPLOADED', $2)
     `, [photo._id, payload]);
-    return photo;
+    return { ...photo, jobId };
   });
 }
 

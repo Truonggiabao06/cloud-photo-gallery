@@ -25,10 +25,12 @@ resource "render_web_service" "backend" {
 
   env_vars = {
     for key, value in merge(local.storage, {
-      STORAGE_BACKEND     = "s3"
-      ENTRA_TENANT_ID     = var.entra.tenant_id
-      ENTRA_API_CLIENT_ID = var.entra.api_client_id
-      REQUIRED_API_SCOPE  = var.entra.scope
+      STORAGE_BACKEND            = "s3"
+      HTTP_TRUST_PROXY_HOPS      = "1"
+      HTTP_RATE_LIMIT_PER_15_MIN = var.environment == "staging" ? "3000" : "300"
+      ENTRA_TENANT_ID            = var.entra.tenant_id
+      ENTRA_API_CLIENT_ID        = var.entra.api_client_id
+      REQUIRED_API_SCOPE         = var.entra.scope
       }, var.frontend_origin == null ? {} : {
       CORS_ORIGINS = var.frontend_origin
       }, var.worker_wake_url == null ? {} : {
@@ -62,8 +64,9 @@ resource "render_web_service" "worker" {
 
   env_vars = {
     for key, value in merge(local.storage, {
-      WORKER_MODE      = "outbox"
-      BACKEND_BASE_URL = render_web_service.backend.url
+      WORKER_MODE        = "outbox"
+      DEPLOY_ENVIRONMENT = var.environment
+      BACKEND_BASE_URL   = render_web_service.backend.url
     }) : key => { value = value }
   }
 }

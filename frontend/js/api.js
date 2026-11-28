@@ -20,6 +20,9 @@ export const remoteApi = {
     async albums() { return (await request('/albums')).albums.map(normalizeAlbum); },
     async images() { return (await request('/photos')).photos.map(normalizePhoto); },
     async createAlbum(body) { return normalizeAlbum((await request('/albums', { method: 'POST', body: JSON.stringify(body) })).album); },
+    inviteViewer: (albumId, memberId) => request(`/albums/${encodeURIComponent(albumId)}/members`, {
+        method: 'POST', body: JSON.stringify({ memberId })
+    }),
     imageStatus: id => request(`/photos/${encodeURIComponent(id)}/status`),
     upload(file, albumId, onProgress = () => {}) {
         return new Promise((resolve, reject) => {

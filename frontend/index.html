@@ -46,6 +46,7 @@
                     <p class="subtitle" id="pageSubtitle">Lưu giữ và quản lý những khoảnh khắc của bạn.</p>
                   </div>
                   <div class="heading-actions">
+                    <button class="btn secondary" id="inviteViewerBtn" hidden>Mời người xem</button>
                     <button class="btn secondary" id="newAlbumBtn">＋ Tạo album</button>
                     <button class="btn primary" id="uploadBtn">↑ Tải ảnh lên</button>
                   </div>
@@ -138,6 +139,17 @@
       </footer>
     </form>
   </dialog>
+  <dialog id="inviteViewerDialog" class="modal narrow">
+    <form id="inviteViewerForm">
+      <h2>Mời người xem</h2>
+      <p>Nhập ID tài khoản mà người xem thấy sau khi đăng nhập.</p>
+      <label for="viewerId">ID người xem</label>
+      <input id="viewerId" maxlength="255" required>
+      <button class="btn secondary" type="button" data-close="inviteViewerDialog">Hủy</button>
+      <button class="btn primary" type="submit">Cấp quyền xem</button>
+    </form>
+  </dialog>
+
   <dialog id="detailDialog" class="modal detail-modal">
     <div class="modal-body">
       <div class="modal-head">
