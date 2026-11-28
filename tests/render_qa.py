@@ -38,14 +38,14 @@ def fixtures():
 
 
 class Stage:
-    def __init__(self):
+    def __init__(self, roles):
         origin = urlsplit(os.environ["QA_API_URL"])
         require(origin.scheme == "https" and origin.hostname and not origin.username and
                 origin.path in ("", "/") and not origin.query and not origin.fragment,
                 "QA_API_URL must be the staging HTTPS origin")
         self.origin = origin.geturl().rstrip("/")
         self.tokens = {role: os.environ[f"QA_{role.upper()}_TOKEN"]
-                       for role in ("owner", "viewer", "outsider")}
+                       for role in roles}
         self.sessions = local()
 
     def http(self, method, url, **kwargs):
@@ -118,12 +118,13 @@ def replay(db, photo_id, timeout):
 
 def acceptance(stage, args, report):
     identities = {role: stage.api("GET", "/api/auth/me", role)["user"]["id"] for role in stage.tokens}
-    require(len(set(identities.values())) == 3, "Use three distinct test identities")
+    require(len(set(identities.values())) == len(identities), "Use distinct test identities")
+    report["authorizationMode"] = "three-accounts" if "outsider" in identities else "before-and-after-invite"
+    outsider = "outsider" if "outsider" in identities else "viewer"
     album = stage.api("POST", "/api/albums", expected=201, json={
         "name": "QA Render " + stamp(), "description": "Synthetic staging acceptance"
     })["album"]["_id"]
     report["albumId"] = album
-    stage.api("POST", f"/api/albums/{album}/members", json={"memberId": identities["viewer"]})
     inputs = list(fixtures())
     report["inputs"] = [{"name": name, "sha256": hashlib.sha256(data).hexdigest(),
                          "expected": "COMPLETED" if valid else "FAILED"}
@@ -160,15 +161,22 @@ def acceptance(stage, args, report):
     target = photos[inputs[0][0]]
     photo_id = target["_id"]
     status_path = f"/api/photos/{photo_id}/status"
-    stage.api("GET", status_path, "viewer")
-    stage.api("GET", status_path, "outsider", expected=404)
+    gallery_path = f"/api/photos?albumId={album}"
+    stage.api("GET", status_path, outsider, expected=404)
+    require(not stage.api("GET", gallery_path, outsider)["photos"],
+            "An uninvited account received gallery records")
     stage.api("GET", status_path, "anonymous", expected=401)
+
+    stage.api("POST", f"/api/albums/{album}/members", json={"memberId": identities["viewer"]})
+    stage.api("GET", status_path, "viewer")
     stage.api("POST", f"/api/albums/{album}/members", "viewer", expected=404,
-              json={"memberId": identities["outsider"]})
+              json={"memberId": identities["owner"]})
     stage.api("POST", "/api/photos/upload", "viewer", expected=404, data={"albumId": album},
               files={"image": (inputs[0][0], inputs[0][1], inputs[0][2])})
-    require(not stage.api("GET", f"/api/photos?albumId={album}", "outsider")["photos"],
-            "Outsider received gallery records")
+    if "outsider" in identities:
+        stage.api("GET", status_path, "outsider", expected=404)
+        require(not stage.api("GET", gallery_path, "outsider")["photos"],
+                "An uninvited account received gallery records after sharing")
     stage.private_objects(target)
     report["test3"] = {"failed": counts["FAILED"], "ownerAndViewerAllowed": True,
                        "viewerWriteDenied": True, "outsiderAndUnsignedDenied": True}
@@ -223,6 +231,8 @@ def load(stage, args, report):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=["acceptance", "load"])
+    parser.add_argument("--two-accounts", action="store_true",
+                        help="Check the viewer account before and after the invitation")
     parser.add_argument("--timeout", type=int, default=900)
     parser.add_argument("--photo-id")
     parser.add_argument("--warmup", type=int, default=5)
@@ -235,7 +245,15 @@ def main():
     require(1 <= args.timeout <= 1800, "Timeout must be between 1 and 1800 seconds")
     report = {"command": args.command, "startedAt": utc()}
     try:
-        stage = Stage()
+        roles = ["owner"]
+        if args.command == "acceptance":
+            roles.append("viewer")
+            if not args.two_accounts:
+                roles.append("outsider")
+            for key in ("DATABASE_URL", "S3_ENDPOINT", "S3_REGION", "S3_BUCKET",
+                        "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"):
+                require(os.getenv(key), f"Missing staging environment variable: {key}")
+        stage = Stage(roles)
         (acceptance if args.command == "acceptance" else load)(stage, args, report)
         report["passed"] = True
     except Exception as exc:

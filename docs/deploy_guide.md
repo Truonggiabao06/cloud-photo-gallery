@@ -228,6 +228,8 @@ python tests/render_qa.py acceptance
 python tests/render_qa.py load --photo-id <samplePhotoId> --warmup 5 --duration 30 --concurrency 4 --rps 4
 ```
 
+Nếu chỉ có hai tài khoản, chạy `python tests/render_qa.py acceptance --two-accounts` với token owner và viewer. Chế độ này kiểm tra tài khoản thứ hai bị từ chối trước khi mời, sau đó xác nhận tài khoản đó xem được và vẫn bị chặn thao tác ghi. Báo cáo ghi `authorizationMode: before-and-after-invite`.
+
 Acceptance tạo một album mới và 105 fixture tổng hợp mỗi lần, dùng API upload thật. Test 2 giao lại event đã hoàn tất thêm năm lần. Gói JSON trong `evidence/` chứa timestamp, hash đầu vào, photo ID và kết quả. Load đo p95 nearest rank trên mẫu HTTP 200 sau warmup. Khởi động API và Worker trước khi đo. Script SQL seed là lựa chọn kiểm tra DB riêng. Chỉ đặt `photo.seed_bucket` sau khi nạp object thật vào đúng key hoặc dùng acceptance để API tạo dữ liệu từ đầu.
 
 ### Rollback staging
