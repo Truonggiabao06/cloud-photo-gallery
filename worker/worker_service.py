@@ -18,11 +18,12 @@ class PermanentMessageError(Exception):
 
 
 class PhotoWorker:
-    def __init__(self, storage, status_client, *, max_image_pixels: int = 40_000_000, before_write=None) -> None:
+    def __init__(self, storage, status_client, *, max_image_pixels: int = 40_000_000, before_write=None, after_first_derivative=None) -> None:
         self.storage = storage
         self.status_client = status_client
         self.max_image_pixels = max_image_pixels
         self.before_write = before_write
+        self.after_first_derivative = after_first_derivative
 
     @staticmethod
     def log_terminal(event: dict, result: dict | None, status: str) -> None:
@@ -30,6 +31,8 @@ class PhotoWorker:
             return
         photo_id = event["photoId"]
         record = {"event": "job_terminal", "photoId": photo_id, "jobId": result.get("jobId") or event.get("jobId", photo_id), "status": status}
+        if event.get("requestId"):
+            record["requestId"] = event["requestId"]
         if event.get("createdAt"):
             created_at = datetime.fromisoformat(event["createdAt"].replace("Z", "+00:00"))
             record["latencySeconds"] = max(0, (datetime.now(timezone.utc) - created_at).total_seconds())
@@ -85,6 +88,8 @@ class PhotoWorker:
             if self.before_write:
                 self.before_write()
             self.storage.save_thumbnail(bucket, key, thumbnail)
+            if key == small_key and self.after_first_derivative:
+                self.after_first_derivative(event)
 
         self.status_client.update(photo_id, {"status": "PROCESSING", "progress": 90})
         result = self.status_client.update(photo_id, {

@@ -34,8 +34,8 @@ export async function loginMicrosoft() {
     });
 
     try {
-        await remoteApi.me();
-        return result.account;
+        const { user } = await remoteApi.me();
+        return { ...result.account, userId: user.id };
     } catch (error) {
         updateRuntime({
             mode: 'demo',

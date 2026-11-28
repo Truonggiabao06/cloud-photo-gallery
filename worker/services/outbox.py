@@ -102,6 +102,8 @@ class Outbox:
             print(json.dumps({"event": "job_attempt", "photoId": photo_id, "jobId": payload["jobId"],
                               "deliveryAttempt": event["attempts"] + 1}), flush=True)
             with make_worker(str(event["lease_id"]), lambda: self.renew(db, event)) as worker:
+                if payload.get("requestId"):
+                    worker.status_client.request_id = payload["requestId"]
                 try:
                     if event["attempts"] >= MAX_RETRIES:
                         state = worker.status_client.update(photo_id, {

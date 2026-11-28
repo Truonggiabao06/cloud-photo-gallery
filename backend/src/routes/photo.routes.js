@@ -16,7 +16,7 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024, files: 1 },
   fileFilter: (req, file, cb) => {
     const allowed = ["image/jpeg", "image/png", "image/webp"];
-    if (!allowed.includes(file.mimetype)) return cb(new Error("Only JPEG, PNG and WEBP images are allowed"));
+    if (!allowed.includes(file.mimetype)) return cb(Object.assign(new Error("Unsupported image type"), { code: "UNSUPPORTED_IMAGE_TYPE" }));
     cb(null, true);
   }
 });
@@ -80,9 +80,12 @@ router.post("/upload", requireAuth, upload.single("image"), async (req, res, nex
       originalName,
       mimeType: req.file.mimetype,
       size: req.file.size,
+      requestId: req.requestId,
       checksumSha256: crypto.createHash("sha256").update(req.file.buffer).digest("hex")
     });
 
+    req.photoId = createdPhoto._id;
+    req.jobId = createdPhoto.jobId;
     wakeWorker();
     res.status(201).json({
       success: true,
@@ -165,8 +168,11 @@ router.get("/:id/status", requireAuth, async (req, res, next) => {
     const photo = await gallery.findPhoto(req.user.id, req.params.id);
     if (!photo) return res.status(404).json({ success: false, message: "Photo not found" });
 
+    req.photoId = photo._id;
+    req.jobId = photo.jobId;
     res.json({
       success: true,
+      jobId: photo.jobId,
       photoId: photo._id,
       status: photo.status,
       progress: photo.progress,
@@ -210,6 +216,8 @@ router.get("/:id/status", requireAuth, async (req, res, next) => {
  *         description: Status updated
  */
 router.patch("/:id/worker-status", requireWorker, async (req, res, next) => {
+  req.workerAuthenticated = true;
+  if (gallery.isUuid(req.params.id)) req.photoId = req.params.id;
   try {
     const allowed = ["PENDING", "PROCESSING", "COMPLETED", "FAILED"];
     const { status, progress, thumbnailObject, thumbnailSmallObject, thumbnailLargeObject, errorMessage, thumbnailBytes } = req.body;
@@ -255,6 +263,7 @@ router.patch("/:id/worker-status", requireWorker, async (req, res, next) => {
     if (leaseLost) return res.status(409).json({ success: false, message: "Outbox lease expired" });
     if (!photo) return res.status(404).json({ success: false, message: "Photo not found" });
 
+    req.jobId = photo.jobId;
     res.json({
       success: true, photoId: photo._id, jobId: photo.jobId, status: photo.status,
       progress: photo.progress, alreadyTerminal, terminalCommit

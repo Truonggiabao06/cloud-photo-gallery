@@ -216,3 +216,24 @@ Chờ operation hoàn thành rồi quay lại mục 2 để bật secret.
 ## 7. Recreate
 
 Lưu evidence và chạy [cleanup](cost_and_cleanup.md) với đúng state. Set `enable_push = false`, `app_secrets_ready = false`, `postgres_secret_ready = false`. Chọn prefix mới nếu dựng lại ngay trong cùng project vì WIF Pool/Provider giữ tên soft-delete khoảng 30 ngày; đổi bucket nếu tên chưa dùng lại được. Dùng tên SQL mới nếu tên đã xoá còn bị giữ. Lặp bước 1–4, nạp secret phiên bản mới, cập nhật GitHub vars và redirect URI. Lưu plan, workflow run, smoke và revision của lần recreate. [Rollback Cloud Run](https://cloud.google.com/run/docs/rollouts-rollbacks-traffic-migration) · [Static egress](https://cloud.google.com/run/docs/configuring/static-outbound-ip) · [Pub/Sub push](https://cloud.google.com/run/docs/tutorials/pubsub).
+
+## Nghiệm thu và rollback trên Render
+
+Làm theo [Phase 3](render-supabase-phase3.md) để provision môi trường. API và Worker phải cùng bucket và runtime DB role. Setup Supabase project, bucket, TLS pooler và login runtime là các bước quản trị riêng, Terraform Render quản lý ba service và liên kết nhóm môi trường.
+
+Cài `tests/requirements.txt` vào virtualenv. Đặt `QA_CONFIRM_STAGING=yes`, `QA_API_URL` là origin staging, và `QA_OWNER_TOKEN`, `QA_VIEWER_TOKEN`, `QA_OUTSIDER_TOKEN` là access token API của ba tài khoản Entra thử riêng biệt. Truyền `DATABASE_URL`, `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID` và `S3_SECRET_ACCESS_KEY` từ môi trường riêng của staging. Dùng Session pooler với verify-full, ghi nhận SHA đang live, và chạy:
+
+```sh
+python tests/render_qa.py acceptance
+python tests/render_qa.py load --photo-id <samplePhotoId> --warmup 5 --duration 30 --concurrency 4 --rps 4
+```
+
+Nếu chỉ có hai tài khoản, chạy `python tests/render_qa.py acceptance --two-accounts` với token owner và viewer. Chế độ này kiểm tra tài khoản thứ hai bị từ chối trước khi mời, sau đó xác nhận tài khoản đó xem được và vẫn bị chặn thao tác ghi. Báo cáo ghi `authorizationMode: before-and-after-invite`.
+
+Acceptance tạo một album mới và 105 fixture tổng hợp mỗi lần, dùng API upload thật. Test 2 giao lại event đã hoàn tất thêm năm lần. Gói JSON trong `evidence/` chứa timestamp, hash đầu vào, photo ID và kết quả. Load đo p95 nearest rank trên mẫu HTTP 200 sau warmup. Khởi động API và Worker trước khi đo. Script SQL seed là lựa chọn kiểm tra DB riêng. Chỉ đặt `photo.seed_bucket` sau khi nạp object thật vào đúng key hoặc dùng acceptance để API tạo dữ liệu từ đầu.
+
+### Rollback staging
+
+1. Ghi SHA, deploy ID và kết quả health hiện tại. Dừng các lượt deploy tiếp theo của GitHub Actions trong khi rollback. Xác nhận schema DB hiện tại tương thích với bản tốt.
+2. Trong Render Deploys của service bị ảnh hưởng, chọn deploy thành công đã biết và **Rollback**. Nếu artifact đã hết retention, dùng **Manual Deploy → Deploy a specific commit** với SHA tốt. Nếu API và Worker đổi hợp đồng, đưa cả hai về cặp phiên bản tương thích.
+3. Xác nhận SHA mới live, API và Worker `/health`, đăng nhập, xem album riêng và upload một ảnh thử mới. Lưu timestamp, deploy ID trước/sau và kết quả smoke đã lọc. PostgreSQL và Storage giữ dữ liệu qua rollback, nên không restore DB hoặc xóa object chỉ vì rollback code. [Render Rollbacks](https://render.com/docs/rollbacks).

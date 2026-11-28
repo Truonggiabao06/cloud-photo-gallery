@@ -3,3 +3,5 @@ Pillow>=12.0.0,<13
 google-cloud-storage>=3.4,<4
 google-cloud-pubsub>=2.31,<3
 google-cloud-logging>=3.12,<4
+boto3>=1.40,<2
+psycopg[binary]>=3.2,<4
