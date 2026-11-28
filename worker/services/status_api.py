@@ -15,6 +15,7 @@ class WorkerStatusClient:
         self.timeout = settings.api_timeout_seconds
         self.session = session or requests.Session()
         self._session_lock = threading.Lock()
+        self.request_id = None
         if lease_id:
             self.session.headers["x-outbox-lease"] = lease_id
 
@@ -47,15 +48,15 @@ class WorkerStatusClient:
             response = self.session.patch(
                 url,
                 json=payload,
+                **({"headers": {"x-photo-upload-request-id": self.request_id}} if self.request_id else {}),
                 timeout=self.timeout,
                 allow_redirects=False,
             )
         if not 200 <= response.status_code < 300:
             # Do not follow redirects: a redirect must never receive the shared secret.
             # Avoid dumping request headers/secrets into logs.
-            body = (response.text or "")[:300]
             raise RuntimeError(
-                f"Backend worker-status API returned HTTP {response.status_code}: {body}"
+                f"Backend worker-status API returned HTTP {response.status_code}"
             )
 
         if not response.text:

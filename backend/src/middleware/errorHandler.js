@@ -1,9 +1,11 @@
 function notFound(req, res) {
-  res.status(404).json({ success: false, message: `Route not found: ${req.method} ${req.originalUrl}` });
+  res.status(404).json({ success: false, message: "Route not found" });
 }
 
 function errorHandler(err, req, res, next) {
-  console.error(err);
+  if (err.code === "UNSUPPORTED_IMAGE_TYPE") {
+    return res.status(400).json({ success: false, message: "Chỉ hỗ trợ ảnh JPEG, PNG và WebP." });
+  }
 
   if (err.code === "LIMIT_FILE_SIZE") {
     return res.status(413).json({ success: false, message: "Image exceeds the 10 MB limit" });
@@ -18,9 +20,11 @@ function errorHandler(err, req, res, next) {
     return res.status(400).json({ success: false, message: "Invalid resource ID" });
   }
 
-  res.status(err.status || 500).json({
+  const status = Number.isInteger(err.status) && err.status >= 400 && err.status < 500 ? err.status : 500;
+  if (status === 500) console.error(JSON.stringify({ event: "request_error", requestId: req.requestId }));
+  res.status(status).json({
     success: false,
-    message: err.status ? err.message : "Internal server error"
+    message: status < 500 ? err.message : "Internal server error"
   });
 }
 

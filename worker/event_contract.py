@@ -98,12 +98,14 @@ def validate_event(payload: Any, expected_bucket: str) -> dict[str, Any]:
     if parsed_time.tzinfo is None:
         raise InvalidEventError("createdAt must include a timezone")
 
+    request_id = payload.get("requestId")
     # Return a new, normalized mapping rather than mutating Pub/Sub's decoded object.
     return {
         "eventType": "PHOTO_UPLOADED",
         "eventVersion": 1,
         "photoId": photo_id.lower(),
         "jobId": job_id.lower(),
+        **({"requestId": request_id.lower()} if isinstance(request_id, str) and UUID_PATTERN.fullmatch(request_id) else {}),
         "albumId": album_id.lower(),
         "userId": user_id,
         "bucket": bucket,

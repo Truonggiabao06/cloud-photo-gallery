@@ -7,7 +7,7 @@ const albumFields = `a.id AS "_id", a.owner_id AS "ownerId", a.name, a.descripti
 const canReadAlbum = `(a.owner_id = $1 OR EXISTS (
   SELECT 1 FROM album_members m WHERE m.album_id = a.id AND m.member_id = $1
 ))`;
-const photoFields = `i.id AS "_id", i.album_id AS "albumId", i.owner_id AS "ownerId",
+const photoFields = `i.id AS "_id", j.id AS "jobId", i.album_id AS "albumId", i.owner_id AS "ownerId",
   i.original_object_key AS "originalObject", i.original_filename AS "originalName",
   i.mime_type AS "mimeType", i.file_size::int AS size,
   CASE WHEN i.status = 'UPLOADED' THEN 'PENDING' ELSE i.status END AS status,
@@ -61,8 +61,9 @@ async function inviteViewer(ownerId, id, viewerId) {
 async function listPhotos(userId, albumId) {
   if (albumId !== undefined && !isUuid(albumId)) return [];
   const { rows } = await query(`SELECT ${photoFields} FROM images i
-    JOIN albums a ON a.id = i.album_id WHERE ${canReadAlbum}
-      AND ($2::uuid IS NULL OR a.id = $2) ORDER BY i.created_at DESC LIMIT 100`,
+    JOIN albums a ON a.id = i.album_id LEFT JOIN processing_jobs j ON j.image_id = i.id
+    WHERE ${canReadAlbum}
+      AND ($2::uuid IS NULL OR a.id = $2) ORDER BY i.created_at DESC, i.id DESC LIMIT 200`,
   [userId, albumId ?? null]);
   return rows;
 }
@@ -70,7 +71,8 @@ async function listPhotos(userId, albumId) {
 async function findPhoto(userId, id) {
   if (!isUuid(id)) return undefined;
   const { rows } = await query(`SELECT ${photoFields} FROM images i
-    JOIN albums a ON a.id = i.album_id WHERE ${canReadAlbum} AND i.id = $2`, [userId, id]);
+    JOIN albums a ON a.id = i.album_id LEFT JOIN processing_jobs j ON j.image_id = i.id
+    WHERE ${canReadAlbum} AND i.id = $2`, [userId, id]);
   return rows[0];
 }
 

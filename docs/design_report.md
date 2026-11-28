@@ -107,3 +107,29 @@ Chốt tải kiểm thử và tier với nhóm trước khi đo. So chi phí Clo
 | Hiệu năng | URL endpoint không query, thời lượng, warmup, tải gửi thật, concurrency, số mẫu, error rate và p95 |
 | Chính xác DB | Xuất kết quả đọc 1 Image, 1 ProcessingJob hoàn tất, 1 ProcessedEvent theo cùng business key; không xuất DB credentials |
 | Chi phí | Giả định hàng tháng, billing export đã lọc, thời gian destroy và đầu ra xác minh |
+
+## Kiến trúc staging đang dùng trên Render và Supabase
+
+Bản demo staging dùng [Render Static Site](https://photo07-gia-staging-web.onrender.com/) và hai Render Web Service Docker ở Singapore. Supabase cung cấp PostgreSQL qua Session pooler và bucket Storage S3 riêng tư. Kiểm tra region Supabase trong dashboard trước khi ghi vào hồ sơ nộp. Xác nhận giảng viên chấp thuận phương án này nếu áp dụng yêu cầu AWS, Azure hoặc GCP ở trang 1 của đề.
+
+```mermaid
+flowchart LR
+    B["Trình duyệt"] -->|"HTTPS"| F["Render Static Site"]
+    B <-->|"OIDC"| E["Microsoft Entra ID"]
+    B -->|"HTTPS + bearer"| A["Render API"]
+    subgraph S["Supabase"]
+        D["PostgreSQL + Outbox"]
+        O["Private S3 bucket"]
+    end
+    A -->|"TLS verify-full"| D
+    A -->|"HTTPS S3"| O
+    B -->|"HTTPS signed GET"| O
+    W["Render Worker"] -->|"TLS lease và poll"| D
+    W -->|"HTTPS ghi 2 WebP"| O
+    W -->|"HTTPS callback + secret"| A
+    A -->|"HTTPS wake + secret"| W
+```
+
+Các đường Render → Supabase đi qua endpoint TLS và dùng thông tin xác thực runtime. Đăng nhập Entra bảo vệ API và kiểm tra quyền album trước khi ký link đọc. Link đã ký có thời hạn và cần được giữ riêng như bearer capability. Vùng lỗi gồm API/Worker Render, Supabase pooler, bucket và Entra. Worker Render đọc hàng đợi PostgreSQL và lấy lại job khi lease hết hạn. Worker Free có thể ngủ hoặc khởi động lại, nên thời gian phục hồi phụ thuộc uptime của API, Worker và kết nối Supabase.
+
+Xem [nghiệm thu và rollback Render](deploy_guide.md#nghiệm-thu-và-rollback-trên-render), [diễn tập](monitoring_runbook.md#failure-drill-trên-render-và-supabase) và [chi phí staging](cost_and_cleanup.md#ước-tính-render-và-supabase).

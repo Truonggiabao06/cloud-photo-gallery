@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="vi">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cloud Gallery Operations</title>
+<h1>Cloud Gallery Operations</h1>
+<form id="connect">
+    <label for="token">Token giám sát</label>
+    <input id="token" type="password" autocomplete="off" required>
+    <button>Kết nối</button>
+</form>
+<p id="status" role="status"></p>
+<table>
+    <thead><tr><th scope="col">Chỉ số</th><th scope="col">Giá trị</th></tr></thead>
+    <tbody id="metrics"></tbody>
+</table>
+<script src="/ops/dashboard.js" defer></script>
+</html>

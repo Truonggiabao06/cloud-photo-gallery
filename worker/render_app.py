@@ -1,6 +1,7 @@
 """Run a Render HTTP service and one background Outbox consumer per instance."""
 
 import hmac
+import json
 import logging
 import os
 import threading
@@ -12,6 +13,7 @@ from dotenv import load_dotenv
 from flask import Flask, request
 
 from config import _positive_int, _validate_api_url
+from event_contract import UUID_PATTERN
 from services.outbox import Outbox
 from services.s3_service import S3ImageStorage
 from services.status_api import WorkerStatusClient
@@ -40,12 +42,29 @@ def create_app():
     outbox = Outbox(database_url, bucket)
     wake = threading.Event()
     heartbeat = None
+    drill_photo = None
+    if os.getenv("QA_CRASH_AFTER_FIRST_DERIVATIVE") == "1":
+        drill_photo = os.getenv("QA_DRILL_PHOTO_ID", "").lower()
+        if os.getenv("DEPLOY_ENVIRONMENT") != "staging" or not UUID_PATTERN.fullmatch(drill_photo):
+            raise RuntimeError("Failure drill requires staging and a single QA_DRILL_PHOTO_ID")
+
+    def crash_after_first_derivative(event):
+        if event["photoId"] == drill_photo:
+            print(json.dumps({
+                "event": "drill_exit", "photoId": event["photoId"],
+                "jobId": event["jobId"], "requestId": event.get("requestId"),
+            }), flush=True)
+            os._exit(86)
+
 
     @contextmanager
     def make_worker(lease_id, before_write):
         status_client = WorkerStatusClient(settings, lease_id=lease_id)
         try:
-            yield PhotoWorker(store, status_client, max_image_pixels=pixel_limit, before_write=before_write)
+            yield PhotoWorker(
+                store, status_client, max_image_pixels=pixel_limit, before_write=before_write,
+                after_first_derivative=crash_after_first_derivative if drill_photo else None,
+            )
         finally:
             status_client.session.close()
 

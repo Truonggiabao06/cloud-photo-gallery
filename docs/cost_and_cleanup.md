@@ -60,3 +60,18 @@ gcloud secrets list --project "$PROJECT"
 ```
 
 Đối chiếu prefix của deployment đã xóa. Kiểm tra Cloud SQL retained/on-demand backup hoặc final backup trong Console nếu nhóm đã cấu hình giữ, bucket state riêng và log sink/export ngoài Terraform. Xóa GitHub vars/Entra demo registration riêng nếu không dùng chung; xác minh chính sách retention của log và WIF soft delete. Terraform giữ API enable để những workload khác trong project tiếp tục hoạt động. Xem Billing Reports sau khi chi phí đã cập nhật, đối chiếu theo SKU và ngày destroy.
+
+## Ước tính Render và Supabase
+
+Giả định một staging dành riêng cho demo, 100 ảnh mới/tháng, ảnh gốc trung bình 2 MB, mỗi ảnh có 2 thumbnail tổng 200 kB, giữ 2 tháng. Các con số dưới đây là giả định workload để dự toán.
+
+| Hạng mục | Giả định tháng | Dự toán |
+|---|---|---|
+| Render Free, Singapore | API và Worker 60 giờ hoạt động/dịch vụ. Static Site phục vụ frontend. Tổng 120 giờ so với 750 giờ dùng chung workspace. Giả định 10 lượt build mỗi dịch vụ, 60 phút build tổng cộng. | 0 USD nếu nằm trong hạn mức build và băng thông workspace |
+| Supabase Free, region xác nhận trong dashboard | PostgreSQL thấp hơn 500 MB. Khoảng 440 MB object giữ 2 tháng. | 0 USD trong quota |
+| Requests và egress | 100 PUT gốc, 100 GET xử lý, 200 PUT thumbnail. 1.000 lượt GET thumbnail × 100 kB, 200 GET gốc × 2 MB, 100 GET xử lý × 2 MB, tổng khoảng 700 MB từ Storage trước retry. Giả định 3.000 API request và 500 MB Render outbound tính cả PUT gốc và frontend. | 0 USD trong quota |
+| Backup | Free Supabase không có automatic backups. Giả định 1 bản logical export dưới 50 MB lưu mã hóa ở nơi nhóm kiểm soát, cộng phí lưu và tải xuống nếu có. | 0 USD nếu nơi lưu nằm trong hạn mức sẵn có |
+
+Tổng có điều kiện **0 USD/tháng** cho workload trên. Theo dõi egress, phút build và giờ thực tế trước khi giữ cả hai Web Service chạy lâu. Xác nhận quota của workspace trước khi diễn tập. [Render Free](https://render.com/docs/free) · [Render bandwidth](https://render.com/docs/faq) · [Supabase Pricing](https://supabase.com/pricing).
+
+Sau khi đã nộp và hết thời gian giữ dữ liệu, lưu evidence đã lọc và bản backup được phép. Tắt `RENDER_DEPLOY_ENABLED` trong GitHub staging. Xác nhận đúng workspace, project, bucket và region rồi dùng Terraform destroy cho stack Render hoặc xóa các service tương ứng theo quy trình nhóm. Thu hồi khóa Render, S3 và webhook riêng của staging. Xóa nội dung bucket và project **Supabase staging** chỉ khi được nhóm duyệt, sau đó kiểm tra Render Workspace Billing và Supabase Usage để xác nhận tài nguyên còn tính phí.

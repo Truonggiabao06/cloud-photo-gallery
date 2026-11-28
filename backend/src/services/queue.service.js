@@ -9,6 +9,7 @@ function photoUploadedPayload(photo) {
     eventVersion: 1,
     photoId: String(photo._id),
     jobId: photo.jobId,
+    ...(photo.requestId && { requestId: photo.requestId }),
     albumId: String(photo.albumId),
     userId: photo.ownerId,
     bucket,

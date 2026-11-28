@@ -14,6 +14,7 @@ catch {
     return '';
 } };
 const date = (s) => s ? new Date(s).toLocaleDateString('vi-VN') : '—';
+const errorHTML = im => im.status === 'failed' && im.errorMessage ? `<p>${escapeHTML(im.errorMessage)}</p>` : '';
 const statusHTML = (s) => `<span class="status ${escapeHTML(s)}">${labels[s] || escapeHTML(s || 'Không rõ')}</span>`;
 const toast = (msg, type = '') => { const d = document.createElement('div'); d.className = `toast ${type}`; d.textContent = msg; $('#toastArea').append(d); setTimeout(() => d.remove(), 4500); };
 const show = (id) => document.getElementById(id).showModal();
@@ -47,6 +48,8 @@ function render() {
     $('#statusFilter').style.display = onAlbum ? 'none' : '';
     $('#newAlbumBtn').style.display = onJobs ? 'none' : '';
     $('#uploadBtn').style.display = onJobs ? 'none' : '';
+    const currentAlbum = state.albums.find(album => album.id === state.albumId);
+    $('#inviteViewerBtn').hidden = isDemo() || !state.userId || currentAlbum?.ownerId !== state.userId;
     const q = state.search.toLowerCase();
     if (onAlbum) {
         const found = state.albums.filter(x => (x.name || '').toLowerCase().includes(q));
@@ -54,7 +57,7 @@ function render() {
     }
     else if (onJobs) {
         const imgs = filterImages();
-        $('#content').innerHTML = imgs.length ? `<div class="jobs-table"><table><thead><tr><th>Tên ảnh</th><th>Job / Image ID</th><th>Trạng thái</th><th>Tiến độ xử lý</th><th>Ngày tạo</th></tr></thead><tbody>${imgs.map(im => `<tr><td>${escapeHTML(im.name)}</td><td class="mono">${escapeHTML(im.id)}</td><td>${statusHTML(im.status)}</td><td>${escapeHTML(im.progress ?? (im.status === 'completed' ? 100 : 0))}%</td><td>${date(im.createdAt)}</td></tr>`).join('')}</tbody></table></div>` : empty('Không có job phù hợp', 'Chưa có tiến trình xử lý ảnh.');
+        $('#content').innerHTML = imgs.length ? `<div class="jobs-table"><table><thead><tr><th>Tên ảnh</th><th>Job / Image ID</th><th>Trạng thái</th><th>Tiến độ xử lý</th><th>Ngày tạo</th></tr></thead><tbody>${imgs.map(im => `<tr><td>${escapeHTML(im.name)}</td><td class="mono">${escapeHTML(im.jobId || im.id)}</td><td>${statusHTML(im.status)}${errorHTML(im)}</td><td>${escapeHTML(im.progress ?? (im.status === 'completed' ? 100 : 0))}%</td><td>${date(im.createdAt)}</td></tr>`).join('')}</tbody></table></div>` : empty('Không có job phù hợp', 'Chưa có tiến trình xử lý ảnh.');
     }
     else
         $('#content').innerHTML = `${single ? '<button class="back-btn" id="backAlbums">← Quay lại Album</button>' : ''}${imageList(filterImages())}`;
@@ -69,7 +72,7 @@ function detail(id) {
     const image = safeImageUrl(im.thumbnailUrl || im.url || '');
     $('#detailTitle').textContent = im.name || 'Chi tiết ảnh';
     $('#detailPreview').innerHTML = image ? `<img src="${escapeHTML(image)}" alt="${escapeHTML(im.name)}">` : '<span style="font-size:50px;color:#90a0b5">▧</span>';
-    $('#detailInfo').innerHTML = `<p><strong>Tên file</strong>${escapeHTML(im.name)}</p><p><strong>Trạng thái</strong>${statusHTML(im.status)}</p><p><strong>Album</strong>${escapeHTML(state.albums.find(a => a.id === im.albumId)?.name || 'Chưa phân loại')}</p><p><strong>Ngày tạo</strong>${date(im.createdAt)}</p><p><strong>ID</strong><span class="mono">${escapeHTML(im.id)}</span></p>`;
+    $('#detailInfo').innerHTML = `<p><strong>Tên file</strong>${escapeHTML(im.name)}</p><p><strong>Trạng thái</strong>${statusHTML(im.status)}</p>${errorHTML(im)}<p><strong>Album</strong>${escapeHTML(state.albums.find(a => a.id === im.albumId)?.name || 'Chưa phân loại')}</p><p><strong>Ngày tạo</strong>${date(im.createdAt)}</p><p><strong>ID</strong><span class="mono">${escapeHTML(im.id)}</span></p>`;
     show('detailDialog');
 }
 function prepareUpload() { const select = $('#uploadAlbum'); select.replaceChildren(new Option(isDemo() ? 'Không chọn album' : 'Chọn album (bắt buộc)', '')); state.albums.forEach(a => select.add(new Option(a.name, a.id))); $('#fileInput').value = ''; $('#fileList').replaceChildren(); $('#uploadProgressArea').hidden = true; $('#startUploadBtn').disabled = false; show('uploadDialog'); }
@@ -147,6 +150,24 @@ function init() {
     document.querySelectorAll('.nav-item').forEach(b => b.addEventListener('click', () => navigate(b.dataset.view)));
     $('#menuBtn').addEventListener('click', () => $('#sidebar').classList.toggle('open'));
     $('#newAlbumBtn').addEventListener('click', () => show('albumDialog'));
+    $('#inviteViewerBtn').addEventListener('click', () => {
+        $('#inviteViewerForm').reset();
+        show('inviteViewerDialog');
+    });
+    $('#inviteViewerForm').addEventListener('submit', async event => {
+        event.preventDefault();
+        const button = event.submitter;
+        button.disabled = true;
+        try {
+            await remoteApi.inviteViewer(state.albumId, $('#viewerId').value.trim());
+            close('inviteViewerDialog');
+            toast('Đã cấp quyền xem album', 'success');
+        } catch (error) {
+            toast(error.message, 'error');
+        } finally {
+            button.disabled = false;
+        }
+    });
     $('#uploadBtn').addEventListener('click', prepareUpload);
     $('#settingsBtn').addEventListener('click', settings);
     $('#uploadForm').addEventListener('submit', uploadFiles);
@@ -201,6 +222,15 @@ import('./auth.js').then(({ loginMicrosoft }) => {
 
         try {
             const account = await loginMicrosoft();
+            state.userId = account.userId;
+            const id = document.createElement('input');
+            id.readOnly = true;
+            id.value = account.userId;
+            id.setAttribute('aria-label', 'ID tài khoản để nhận lời mời');
+            const label = document.createElement('label');
+            label.textContent = 'ID nhận lời mời';
+            label.append(id);
+            btn.after(label);
 
             state.images = [];
             state.albums = [];
@@ -220,7 +250,7 @@ import('./auth.js').then(({ loginMicrosoft }) => {
             toast('Lỗi đăng nhập: ' + error.message, 'error');
             console.error(error);
         } finally {
-            btn.disabled = false;
+            btn.disabled = Boolean(state.userId);
         }
     });
 }).catch(error => {
